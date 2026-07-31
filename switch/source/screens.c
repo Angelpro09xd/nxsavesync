@@ -149,6 +149,11 @@ int scr_dock(const scr_ctx_t *c, const ui_input_t *in, bool interactive)
     if (drop_y <= 0.0f) drop_y = target;          // sin volar desde arriba al arrancar
     drop_y = ui_spring(drop_y, target, &drop_v, 260.0f);
 
+    // El logo va sobre el dock, en el hueco de la esquina. Es el unico sitio de
+    // la interfaz donde no compite con nada.
+    ui_logo(DOCK_X + DOCK_W / 2, 88, 68, c->accent,
+            ui_mix(c->accent, COL_TEXT, 0.75f), COL_TEXT);
+
     ui_glass(DOCK_X, DOCK_Y, DOCK_W, DOCK_H, DOCK_R, &GLASS_BAR);
     ui_debug_box(DOCK_X, DOCK_Y, DOCK_W, DOCK_H, "dock");
 
@@ -229,7 +234,19 @@ void scr_topbar(const scr_ctx_t *c, const char *title, const char *sub)
     const int cap_y = 26, cap_h = 56, cap_r = 28;
     const int pad = 16, sep = 1;
 
-    ui_text_sh(CONTENT_X, HEAD_Y + 4, 34, COL_TEXT, "%s", title);
+    // Al cambiar de seccion el titulo entra desde la izquierda en vez de
+    // aparecer de golpe. Se detecta solo comparando con el anterior.
+    static char last[64];
+    static float tin = 1.0f;
+    if (strcmp(last, title) != 0) {
+        snprintf(last, sizeof(last), "%s", title);
+        tin = 0.0f;
+    }
+    tin = ui_approach(tin, 1.0f, 13.0f);
+    int slide = (int)((1.0f - tin) * 22.0f);
+
+    ui_text_sh(CONTENT_X - slide, HEAD_Y + 4, 34,
+               ui_alpha(COL_TEXT, (u8)(255 * (0.25f + 0.75f * tin))), "%s", title);
     if (sub && sub[0])
         ui_text_sh(CONTENT_X + 2, HEAD_Y + 48, 14, ui_alpha(COL_DIM, 200), "%s", sub);
 
@@ -306,8 +323,17 @@ void scr_hints(const char *hints)
 {
     if (!hints || !hints[0]) return;
 
-    int w = ui_text_w(16, hints) + 56;
-    if (w > CONTENT_W) w = CONTENT_W;
+    // El ancho persigue al del texto en vez de saltar: al cambiar de seccion la
+    // barra se estira o se encoge, que es mucho menos brusco que reaparecer con
+    // otro tamano.
+    static float aw = 0.0f;
+
+    int want = ui_text_w(16, hints) + 56;
+    if (want > CONTENT_W) want = CONTENT_W;
+    if (aw <= 0.0f) aw = (float)want;
+    aw = ui_approach(aw, (float)want, 15.0f);
+
+    int w = (int)aw;
     int x = CONTENT_X + (CONTENT_W - w) / 2;
 
     ui_glass(x, HINT_Y, w, HINT_H, HINT_H / 2, &GLASS_BAR);
@@ -777,18 +803,25 @@ int scr_rows(const scr_ctx_t *c, const ui_input_t *in,
 // hojas
 // --------------------------------------------------------------------------
 
+// El velo va antes del cristal y fuera de la capa que se escala: si se
+// escalara con la hoja dejaria una franja sin oscurecer en los bordes.
+void scr_scrim(float in)
+{
+    if (in <= 0.0f) return;
+    if (in > 1.0f) in = 1.0f;
+    ui_rect(0, 0, UI_W, UI_H, (color_t){ 0, 0, 0, (u8)(150 * in) });
+    ui_debug_reset();
+}
+
 void scr_sheet(const scr_ctx_t *c, int w, int h, int *out_x, int *out_y)
 {
     (void)c;
     int x = CONTENT_X + (CONTENT_W - w) / 2;
     int y = (UI_H - h) / 2;
 
-    // El velo va antes del cristal. Como el desenfoque sale del fondo y no de
-    // la pantalla, la hoja queda mas clara que lo que la rodea, que es justo lo
-    // que hace que se lea como algo que esta delante.
-    ui_rect(0, 0, UI_W, UI_H, (color_t){ 0, 0, 0, 150 });
-
-    ui_debug_reset();
+    // Como el desenfoque sale del fondo y no de la pantalla, la hoja queda mas
+    // clara que lo que la rodea, que es justo lo que hace que se lea como algo
+    // que esta delante del velo.
     ui_glass(x, y, w, h, 30, &GLASS_SHEET);
     ui_debug_box(x, y, w, h, "hoja");
 
@@ -798,10 +831,13 @@ void scr_sheet(const scr_ctx_t *c, int w, int h, int *out_x, int *out_y)
 
 int scr_dialog(const scr_ctx_t *c, const ui_input_t *in,
                const char *heading, const char *name, const char *body,
-               const scr_choice_t *ch, color_t tint)
+               const scr_choice_t *ch, color_t tint, float anim)
 {
     const int w = 920, h = 396;
     int x, y;
+
+    scr_scrim(anim);
+    ui_layer_begin();
     scr_sheet(c, w, h, &x, &y);
 
     // Un punto de color y un halo bastan para decir de que tipo es el aviso.
@@ -858,6 +894,7 @@ int scr_dialog(const scr_ctx_t *c, const ui_input_t *in,
         if (ui_hit(in, bx, by, bw, bh)) hit = i;
     }
 
+    ui_layer_end(anim, SHEET_SCALE(anim), x + w / 2, y + h / 2, 0, SHEET_RISE(anim));
     return hit;
 }
 
@@ -867,10 +904,13 @@ int scr_dialog(const scr_ctx_t *c, const ui_input_t *in,
 
 void scr_sync(const scr_ctx_t *c, const char *title, const char *now,
               const char (*log)[160], int log_n,
-              float progress, bool finished)
+              float progress, bool finished, float anim)
 {
     const int w = 950, h = 512;
     int x, y;
+
+    scr_scrim(anim);
+    ui_layer_begin();
     scr_sheet(c, w, h, &x, &y);
 
     const int pad = 40;
@@ -917,6 +957,8 @@ void scr_sync(const scr_ctx_t *c, const char *title, const char *now,
         ui_text(x + pad + 30, y + h - 56, 16, ui_alpha(COL_DIM, 200),
                 "No apagues la consola");
     }
+
+    ui_layer_end(anim, SHEET_SCALE(anim), x + w / 2, y + h / 2, 0, SHEET_RISE(anim));
 }
 
 // --------------------------------------------------------------------------
@@ -925,10 +967,13 @@ void scr_sync(const scr_ctx_t *c, const char *title, const char *now,
 
 // Devuelve la fila tocada, o -1.
 int scr_game_opts(const scr_ctx_t *c, const ui_input_t *in, const scr_game_t *g,
-                  const char *policy, bool excluded, int sel)
+                  const char *policy, bool excluded, int sel, float anim)
 {
     const int w = 820, h = 352;
     int x, y;
+
+    scr_scrim(anim);
+    ui_layer_begin();
     scr_sheet(c, w, h, &x, &y);
 
     const int pad = 34;
@@ -985,6 +1030,7 @@ int scr_game_opts(const scr_ctx_t *c, const ui_input_t *in, const scr_game_t *g,
         ry += rh + 12;
     }
 
+    ui_layer_end(anim, SHEET_SCALE(anim), x + w / 2, y + h / 2, 0, SHEET_RISE(anim));
     return hit;
 }
 
@@ -993,10 +1039,13 @@ int scr_game_opts(const scr_ctx_t *c, const ui_input_t *in, const scr_game_t *g,
 // --------------------------------------------------------------------------
 
 int scr_pc_cfg(const scr_ctx_t *c, const ui_input_t *in, const char *server,
-               const scr_row_t *rows, int n, int sel, bool ok)
+               const scr_row_t *rows, int n, int sel, bool ok, float anim)
 {
     const int w = 980, h = 560;
     int x, y;
+
+    scr_scrim(anim);
+    ui_layer_begin();
     scr_sheet(c, w, h, &x, &y);
 
     const int pad = 36;
@@ -1011,6 +1060,7 @@ int scr_pc_cfg(const scr_ctx_t *c, const ui_input_t *in, const char *server,
                             "No se pudieron leer los ajustes del PC.");
         ui_text_clip_center(x + w / 2, y + h / 2 + 18, 16, w - 120,
                             ui_alpha(COL_DIM, 200), "Y para reintentar, B para volver");
+        ui_layer_end(anim, SHEET_SCALE(anim), x + w / 2, y + h / 2, 0, SHEET_RISE(anim));
         return -1;
     }
 
@@ -1062,5 +1112,6 @@ int scr_pc_cfg(const scr_ctx_t *c, const ui_input_t *in, const char *server,
     ui_text_sh(x + pad, y + h - 46, 14, ui_alpha(COL_DIM, 200),
                n > visible ? "%d de %d   ·   B volver" : "B volver", sel + 1, n);
 
+    ui_layer_end(anim, SHEET_SCALE(anim), x + w / 2, y + h / 2, 0, SHEET_RISE(anim));
     return hit;
 }

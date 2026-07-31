@@ -241,6 +241,7 @@ class Tray:
         self.hwnd = None
         self.hicon = None
         self.rt = None
+        self._menu = None      # el menu web, creado al pedirlo
         self.stop = threading.Event()
         self.lineas: list[str] = []
         self.estado = "arrancando"
@@ -484,13 +485,20 @@ class Tray:
                 daemon.save_config(self.rt.cfg)
 
     def abre_ventana(self) -> None:
-        """La ventana de ajustes, en su propio hilo para no parar la bandeja."""
+        """El menú, servido en local y abierto en el navegador.
+
+        Es una página y no una ventana de escritorio para que tenga el mismo
+        aspecto que el homebrew: el cristal necesita desenfocar lo que hay
+        detrás, y eso ningún kit de ventanas lo hace.
+        """
         try:
-            import nxsavesync_ventana
-            nxsavesync_ventana.abrir_ventana(self, daemon)
+            if self._menu is None:
+                import menu_web
+                self._menu = menu_web.MenuWeb(self, daemon)
+            self._menu.abrir()
         except Exception as e:
-            self.anota(f"No se pudo abrir la ventana: {e}")
-            self.globo(APP_NAME, f"No se pudo abrir la ventana: {e}", NIIF_ERROR)
+            self.anota(f"No se pudo abrir el menu: {e}")
+            self.globo(APP_NAME, f"No se pudo abrir el menu: {e}", NIIF_ERROR)
 
     def abre(self, ruta: Path) -> None:
         try:
@@ -549,6 +557,21 @@ class Tray:
     def engancha(self, rt) -> None:
         self.rt = rt
         rt.on_event = self.evento
+
+        # El menu se levanta ya, aunque no se abra: asi deja escrita su
+        # direccion y el acceso directo del escritorio puede usarla en vez de
+        # arrancar una segunda copia del programa.
+        try:
+            import menu_web
+            self._menu = menu_web.MenuWeb(self, daemon)
+            self._menu._arranca()
+
+            # Si se ha arrancado desde el acceso directo del escritorio, lo que
+            # se queria era el menu, no solo dejar el icono junto al reloj.
+            if "--abrir-menu" in sys.argv:
+                self._menu.abrir()
+        except Exception as e:
+            self.anota(f"El menu no se pudo levantar: {e}")
 
     def hilo_daemon(self) -> None:
         try:

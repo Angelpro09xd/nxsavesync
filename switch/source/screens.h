@@ -140,7 +140,15 @@ int  scr_rows(const scr_ctx_t *c, const ui_input_t *in,
 // hojas
 // --------------------------------------------------------------------------
 
-// Oscurece el fondo y devuelve la caja de la hoja.
+// Las hojas entran creciendo y fundiendose: `anim` va de 0 a 1. La escala
+// arranca casi a tamano para que no parezca que salen disparadas, y suben unos
+// pixeles al entrar.
+#define SHEET_SCALE(a) (0.950f + 0.050f * (a))
+#define SHEET_RISE(a)  ((int)((1.0f - (a)) * 14.0f))
+
+// Oscurece el fondo. Va fuera de la capa que se escala.
+void scr_scrim(float in);
+// Devuelve la caja de la hoja.
 void scr_sheet(const scr_ctx_t *c, int w, int h, int *out_x, int *out_y);
 
 typedef struct { const char *key, *title, *sub; } scr_choice_t;
@@ -148,14 +156,14 @@ typedef struct { const char *key, *title, *sub; } scr_choice_t;
 // Dialogo de tres opciones. Devuelve 0/1/2 si se toca alguna, o -1.
 int  scr_dialog(const scr_ctx_t *c, const ui_input_t *in,
                 const char *heading, const char *name, const char *body,
-                const scr_choice_t *ch, color_t tint);
+                const scr_choice_t *ch, color_t tint, float anim);
 
 // Devuelven la fila tocada, o -1.
 int  scr_game_opts(const scr_ctx_t *c, const ui_input_t *in, const scr_game_t *g,
-                   const char *policy, bool excluded, int sel);
+                   const char *policy, bool excluded, int sel, float anim);
 int  scr_pc_cfg(const scr_ctx_t *c, const ui_input_t *in, const char *server,
-                const scr_row_t *rows, int n, int sel, bool ok);
+                const scr_row_t *rows, int n, int sel, bool ok, float anim);
 
 void scr_sync(const scr_ctx_t *c, const char *title, const char *now,
               const char (*log)[160], int log_n,
-              float progress, bool finished);
+              float progress, bool finished, float anim);

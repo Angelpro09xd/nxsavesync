@@ -64,6 +64,20 @@ void ui_backdrop_begin(void);
 void ui_backdrop_end(void);
 
 // --------------------------------------------------------------------------
+// capa de composicion
+// --------------------------------------------------------------------------
+//
+// Todo lo que se dibuje entre begin y end va a una capa aparte, y al cerrarla
+// se vuelca entera con una opacidad y una escala. Es lo que permite que un menu
+// entre creciendo y fundiendose en vez de aparecer de golpe: sin esto habria que
+// dar opacidad a cada texto, cada icono y cada panel por separado.
+//
+// `scale` va alrededor de (cx, cy), y (dx, dy) desplaza el resultado.
+
+void ui_layer_begin(void);
+void ui_layer_end(float alpha, float scale, int cx, int cy, int dx, int dy);
+
+// --------------------------------------------------------------------------
 // cristal
 // --------------------------------------------------------------------------
 

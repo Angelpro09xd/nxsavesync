@@ -3,7 +3,7 @@
 Sincroniza las partidas guardadas entre una Switch con CFW y un emulador del PC,
 por wifi, en los dos sentidos.
 
-**Desarrollador: Angelpro09_Dev** · versión 4.1
+**Desarrollador: Angelpro09_Dev** · versión 4.2
 
 - **`common/`** — el motor: protocolo, red, manifiestos, ajustes. Lo comparten
   la app y el sysmodule, así que los dos se comportan igual.
@@ -40,15 +40,68 @@ En la consola: copia `switch/nxsavesync.nro` a la carpeta `/switch` de la SD y
 > para entrar en el menú de homebrew. Si lo abres desde el álbum, la app se queda
 > sin memoria y sin permisos para leer los savedata.
 
+## Windows: un solo .exe
+
+```bash
+make -C switch && make -C sysmodule && make -C overlay
+./windows/build.sh          # deja NXSaveSync-Instalador.exe en la raiz
+```
+
+Copia ese `.exe` al PC con Windows y ejecútalo. **No hace falta tener Python ni
+permisos de administrador**: se instala en `%LOCALAPPDATA%` y lleva dentro la
+distribución embebida oficial de Python.
+
+Lo que hace:
+
+- Deja el programa junto al reloj, con su icono, y lo arranca ya.
+- Crea accesos directos en el escritorio y en el menú de inicio.
+- Lo pone a arrancar con la sesión (se puede quitar desde el propio menú).
+- Al terminar, ofrece **instalar también en la consola**: conectas la Switch por
+  USB, abres DBI en modo MTP, y copia la app, el sysmodule y el overlay.
+
+El instalador se construye **desde Linux**: NSIS compila instaladores de Windows
+en cualquier sistema, y el Python que va dentro se descarga tal cual, sin
+compilar nada.
+
+### El menú del PC
+
+Se abre desde el icono, y es una página servida solo en `127.0.0.1`. Que sea una
+página y no una ventana de escritorio tiene dos motivos, y el primero pesa más de
+lo que parece:
+
+1. **Tiene el mismo aspecto que el homebrew.** El cristal necesita desenfocar lo
+   que hay detrás, y eso ningún kit de ventanas de escritorio lo hace. Un
+   navegador sí, con `backdrop-filter`.
+2. **Cabe en el Python reducido que lleva el instalador**, que no trae tkinter.
+
+Las opciones no se escriben ahí: salen de `Runtime.schema()`, que es **la misma
+lista que se le manda a la consola**. Así el menú del PC y el de la Switch no
+pueden acabar diciendo cosas distintas.
+
+La dirección lleva un testigo aleatorio. Sin él cualquier página abierta en el
+navegador podría llamar a ese servidor y cambiar ajustes o rutas.
+
+Los accesos directos abren `abrir_menu.pyw`, no el programa: si ya está en marcha
+solo abre su menú, y si no lo está lo arranca. Pulsar el icono dos veces no deja
+dos copias peleándose por el mismo puerto.
+
 ## El logo
 
-Dos flechas en círculo con un punto en medio: el save que va y vuelve. Lo genera
-`switch/make_icon.py` con PIL, dibujando a 4x y reduciendo al final para tener
-bordes suaves, y sale el `nxsavesync.jpg` de 256x256 que usa el menú de homebrew.
+Una **lente de cristal** con el ciclo de sincronización dentro: la flecha de
+arriba baja hacia la consola, la de abajo sube hacia el PC.
 
-El mismo dibujo se pinta **por código** en la barra lateral de la app (arcos y
-triángulos con SDL2_gfx), así que se tiñe con el color del juego seleccionado y
-no hace falta empaquetar la imagen dentro del binario.
+La lente no es adorno. Es la misma idea que la interfaz —algo transparente con
+luz detrás, brillo especular arriba a la izquierda y un destello cruzado—, así
+que el icono y la app se leen como la misma cosa.
+
+Lo genera `switch/make_icon.py` con PIL, dibujando a 4x y reduciendo al final
+para tener bordes suaves. De ahí salen el `nxsavesync.jpg` de 256x256 que usa el
+menú de homebrew y el `.ico` multi-tamaño de Windows, cada tamaño reducido desde
+el original en vez de dejar que lo escale el sistema.
+
+El mismo dibujo se pinta **por código** dentro de la app (arcos, círculos y
+halos), así que se tiñe con el color del juego elegido y no hace falta empaquetar
+la imagen dentro del binario.
 
 ## La interfaz
 
@@ -97,6 +150,25 @@ cualquier bache.
 Toca una tarjeta para seleccionarla y tócala otra vez para sincronizar. El dock, los
 botones y las filas también responden al tacto, y cada toque deja una onda.
 
+### Lo que se mueve
+
+Nada aparece de golpe. Los menús entran creciendo y fundiéndose, y al cerrarse se
+van antes de dejar de existir: pulsar B no borra la hoja, pide que se cierre.
+
+Para poder fundir un menú entero hizo falta una **capa de composición** en el
+motor. Sin ella habría que dar opacidad a cada panel, cada icono y cada texto por
+separado; con ella se dibuja todo a una textura aparte y se vuelca una vez con su
+opacidad y su escala.
+
+| Qué | Cómo entra |
+|-----|-----------|
+| Menús y diálogos | Crecen desde el 95 % y suben 14 px, fundiéndose |
+| Cambio de sección | El contenido sube 18 px y se funde; el título entra desde la izquierda |
+| Barra de pistas | Se estira o se encoge hasta el ancho del texto nuevo |
+| Tarjeta elegida | El cristal crece 5 px; el contenido no se mueve |
+| Gota del menú | Muelle con inercia, y se estira según lo rápido que vaya |
+| Cada toque | Deja una onda que se expande y se apaga |
+
 ## Ver la interfaz sin la consola
 
 El dibujo vive en `switch/source/screens.c` y no sabe nada de red ni de savedata:
@@ -131,14 +203,24 @@ aviso, empezar y terminar. Se apagan en Ajustes → Sonidos.
 
 ### La música de fondo
 
-También sintetizada, y a juego con el cristal: un acorde de cuatro voces rotando por
-**Am – F – C – G**, cada nota con dos osciladores desafinados un pelín entre sí para
-que flote, y encima repiques con parciales de campana —relaciones 1, 2, 2.76 y 5.4,
-que es lo que distingue un cristal de una flauta—. Debajo, una capa de aire casi
-inaudible.
+También sintetizada, y a juego con el cristal. Tres capas:
+
+1. **El acorde**, cuatro voces rotando por **Do – Sol – Lam – Fa** (I–V–vi–IV,
+   la progresión más luminosa que existe), cada nota con dos osciladores
+   desafinados un pelín entre sí para que flote.
+2. **Un arpegio** de corcheas que sube y baja por las notas del acorde. Es lo que
+   le da alegría: sin él, cuatro voces largas suenan a sala de espera.
+3. **Repiques** con parciales de campana —relaciones 1, 2, 2.76 y 5.4, que es lo
+   que distingue un cristal de una flauta— y debajo una capa de aire.
 
 El bucle dura 32 segundos y **se cose consigo mismo**: la cola se pliega sobre el
 principio con un cruce, así que al repetir no hay golpe.
+
+Que cierre bien obliga a que **todo lo que se repite quepa un número entero de
+veces en esos 32 segundos**. Con corcheas de 0,3125 s entraban 102,4 y al dar la
+vuelta el arpegio saltaba de nota a media envolvente: un chasquido cada 32
+segundos. Con 0,32 s entran 100 exactas. Lo mismo vale para las oscilaciones
+lentas de cada voz, que van en múltiplos de 1/32 Hz.
 
 Se genera en un hilo aparte y empieza a sonar cuando está lista, para no retrasar el
 arranque. Se apaga en Ajustes → Música de fondo.

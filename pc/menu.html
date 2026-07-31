@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NX Save Sync</title>
+<style>
+/* La misma paleta y el mismo lenguaje que el homebrew: fondo casi negro, luces
+   de color moviendose detras, y paneles que las dejan pasar desenfocadas. */
+:root {
+  --ground:#07090E;
+  --pane:rgba(175,190,214,.055);
+  --pane-hi:rgba(175,190,214,.10);
+  --line:rgba(226,236,250,.11);
+  --ink:#F4F7FB; --dim:#98A5B8;
+  --accent:#4AD8E6;
+  --ok:#5CE09B; --warn:#FFC14D; --err:#FF6B7A;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body { height:100%; }
+body {
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--sans); font-size:15px; line-height:1.6;
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+#fondo { position:fixed; inset:0; z-index:0; }
+
+.app { position:relative; z-index:1; height:100%; display:flex; gap:22px; padding:22px; }
+
+/* ---------- dock, igual que en la consola ---------- */
+.dock {
+  flex:0 0 86px; align-self:center;
+  display:flex; flex-direction:column; align-items:center; gap:4px;
+  padding:16px 0; border-radius:44px;
+}
+.glass {
+  background:var(--pane);
+  backdrop-filter:blur(28px) saturate(1.3);
+  -webkit-backdrop-filter:blur(28px) saturate(1.3);
+  border:1px solid var(--line);
+  box-shadow:0 18px 50px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.14);
+}
+.logo { width:52px; height:52px; margin-bottom:12px; opacity:.95; }
+.nav {
+  width:70px; padding:11px 0; border:0; background:transparent; color:var(--dim);
+  border-radius:20px; cursor:pointer; font:inherit; font-size:11px;
+  display:flex; flex-direction:column; align-items:center; gap:5px;
+  transition:color .18s ease, background .18s ease, transform .18s ease;
+}
+.nav svg { width:22px; height:22px; fill:currentColor; }
+.nav:hover { color:var(--ink); background:rgba(255,255,255,.05); }
+.nav.on {
+  color:var(--ink);
+  background:rgba(74,216,230,.22);
+  background:color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow:0 0 0 1px rgba(74,216,230,.55), 0 0 26px rgba(74,216,230,.30);
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+             0 0 26px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.nav:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.estado-dock { margin-top:auto; padding-top:14px; text-align:center; font-size:11px; color:var(--dim); }
+.punto { width:9px; height:9px; border-radius:50%; margin:0 auto 5px; background:var(--ok); }
+
+/* ---------- columna principal ---------- */
+main { flex:1; min-width:0; display:flex; flex-direction:column; gap:18px; }
+
+.cabecera { display:flex; align-items:flex-start; gap:18px; flex-wrap:wrap; }
+h1 { margin:0; font-size:32px; font-weight:650; letter-spacing:-.02em; }
+.cabecera p { margin:2px 0 0; color:var(--dim); font-size:13.5px; }
+.chips { margin-left:auto; display:flex; align-items:stretch; border-radius:26px; overflow:hidden; }
+.chip { padding:9px 17px; display:flex; flex-direction:column; justify-content:center; }
+.chip + .chip { border-left:1px solid var(--line); }
+.chip b { font-size:11px; font-weight:500; color:var(--dim); letter-spacing:.04em; }
+.chip span { font-size:14px; }
+
+.hoja { flex:1; min-height:0; border-radius:24px; padding:24px; overflow-y:auto; }
+.hoja::-webkit-scrollbar { width:10px; }
+.hoja::-webkit-scrollbar-thumb { background:rgba(255,255,255,.14); border-radius:6px; }
+
+section { display:none; animation:entra .26s cubic-bezier(.2,.7,.3,1); }
+section.on { display:block; }
+@keyframes entra { from { opacity:0; transform:translateY(14px) scale(.99); } }
+
+h2 { margin:0 0 4px; font-size:19px; font-weight:640; }
+.ayuda { margin:0 0 20px; color:var(--dim); font-size:13.5px; }
+
+/* ---------- filas ---------- */
+.fila {
+  display:flex; align-items:center; gap:18px;
+  padding:15px 18px; border-radius:16px;
+  background:var(--pane); border:1px solid var(--line);
+  margin-bottom:10px;
+  transition:background .18s ease, transform .18s ease;
+}
+.fila:hover { background:var(--pane-hi); }
+.fila .txt { flex:1; min-width:0; }
+.fila .txt b { display:block; font-weight:600; font-size:15px; }
+.fila .txt small { color:var(--dim); font-size:12.5px; }
+.fila .val { flex:0 0 auto; }
+
+/* interruptor */
+.sw {
+  width:50px; height:28px; border-radius:15px; border:1px solid var(--line);
+  background:rgba(255,255,255,.07); position:relative; cursor:pointer; padding:0;
+  transition:background .2s ease, box-shadow .2s ease;
+}
+.sw::after {
+  content:""; position:absolute; top:3px; left:3px; width:20px; height:20px;
+  border-radius:50%; background:var(--ink);
+  transition:transform .22s cubic-bezier(.3,.8,.3,1);
+}
+.sw[aria-checked="true"] {
+  background:rgba(74,216,230,.70);
+  background:color-mix(in srgb, var(--accent) 70%, transparent);
+  box-shadow:0 0 20px rgba(74,216,230,.40);
+  box-shadow:0 0 20px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.sw[aria-checked="true"]::after { transform:translateX(22px); }
+.sw:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+
+select, input[type=number], input[type=text] {
+  font:inherit; font-size:14px; color:var(--ink);
+  background:rgba(255,255,255,.07); border:1px solid var(--line);
+  border-radius:11px; padding:8px 12px; min-width:150px;
+}
+select:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+
+.btn {
+  font:inherit; font-size:14px; color:var(--ink); cursor:pointer;
+  background:rgba(255,255,255,.09); border:1px solid var(--line);
+  border-radius:12px; padding:9px 18px;
+  transition:background .18s ease, transform .12s ease;
+}
+.btn:hover { background:rgba(255,255,255,.16); }
+.btn:active { transform:scale(.97); }
+.btn.pri {
+  background:rgba(74,216,230,.34);
+  background:color-mix(in srgb, var(--accent) 34%, transparent);
+  border-color:rgba(74,216,230,.70);
+  border-color:color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.acciones { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }
+
+.info { font-family:var(--mono); font-size:13px; color:var(--dim); }
+.ruta { font-family:var(--mono); font-size:12.5px; color:var(--dim); word-break:break-all; }
+
+pre.log {
+  margin:0; padding:16px; border-radius:14px; max-height:100%;
+  background:rgba(0,0,0,.34); border:1px solid var(--line);
+  font-family:var(--mono); font-size:12.5px; line-height:1.75; color:var(--dim);
+  white-space:pre-wrap; word-break:break-word;
+}
+
+/* ---------- aviso flotante ---------- */
+#aviso {
+  position:fixed; left:50%; bottom:26px; transform:translate(-50%,26px);
+  z-index:5; padding:13px 26px; border-radius:26px;
+  opacity:0; pointer-events:none;
+  transition:opacity .22s ease, transform .28s cubic-bezier(.2,.8,.3,1);
+}
+#aviso.on { opacity:1; transform:translate(-50%,0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::after { animation:none !important; transition:none !important; }
+  #fondo { display:none; }
+}
+@media (max-width:820px) {
+  .app { flex-direction:column; padding:14px; }
+  .dock { flex-direction:row; width:100%; flex:0 0 auto; border-radius:28px; align-self:stretch; }
+  .logo, .estado-dock { display:none; }
+}
+</style>
+</head>
+<body>
+<canvas id="fondo" aria-hidden="true"></canvas>
+
+<div class="app">
+  <nav class="dock glass" aria-label="Secciones">
+    <img class="logo" src="/logo.png?t=__TOKEN__" alt="">
+    <button class="nav on" data-sec="estado">
+      <svg viewBox="0 0 24 24"><path d="M4 13h4v7H4zm6-9h4v16h-4zm6 5h4v11h-4z"/></svg>Estado</button>
+    <button class="nav" data-sec="emuladores">
+      <svg viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zm5 13h6v2H9z"/></svg>Emuladores</button>
+    <button class="nav" data-sec="ajustes">
+      <svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm14 0h4v2h-4zM3 11h4v2H3zm6 0h12v2H9zM3 16h12v2H3zm14 0h4v2h-4z"/></svg>Ajustes</button>
+    <button class="nav" data-sec="copias">
+      <svg viewBox="0 0 24 24"><path d="M4 4h6l2 2h8a1 1 0 011 1v11a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z"/></svg>Copias</button>
+    <button class="nav" data-sec="registro">
+      <svg viewBox="0 0 24 24"><path d="M5 3h9l5 5v13a1 1 0 01-1 1H5a1 1 0 01-1-1V4a1 1 0 011-1zm3 9h8v2H8zm0 4h8v2H8z"/></svg>Registro</button>
+    <div class="estado-dock">
+      <div class="punto" id="punto"></div>
+      <span id="dock-estado">listo</span>
+    </div>
+  </nav>
+
+  <main>
+    <div class="cabecera">
+      <div>
+        <h1 id="titulo">Estado</h1>
+        <p>NX Save Sync · Angelpro09_Dev</p>
+      </div>
+      <div class="chips glass">
+        <div class="chip"><b>PC</b><span id="c-pc">…</span></div>
+        <div class="chip"><b>Emulador</b><span id="c-emu">…</span></div>
+        <div class="chip"><b>Escuchando</b><span id="c-red">…</span></div>
+      </div>
+    </div>
+
+    <div class="hoja glass">
+      <section id="s-estado" class="on">
+        <h2>Estado</h2>
+        <p class="ayuda">Lo que ha hecho el daemon desde que arrancó.</p>
+        <div id="stats"></div>
+        <div class="acciones">
+          <button class="btn pri" data-accion="rescan">Volver a buscar emuladores</button>
+          <button class="btn" data-accion="copias">Abrir carpeta de copias</button>
+        </div>
+      </section>
+
+      <section id="s-emuladores">
+        <h2>Emuladores</h2>
+        <p class="ayuda">Los que se han encontrado en este PC. Puedes dejar alguno fuera.</p>
+        <div id="emus"></div>
+      </section>
+
+      <section id="s-ajustes">
+        <h2>Ajustes</h2>
+        <p class="ayuda">Los mismos que ves desde la consola: no hay dos listas que puedan discrepar.</p>
+        <div id="ajustes"></div>
+      </section>
+
+      <section id="s-copias">
+        <h2>Copias de seguridad</h2>
+        <p class="ayuda">Antes de sobrescribir una partida se guarda una copia, con el nombre del juego.</p>
+        <div id="copias"></div>
+        <div class="acciones">
+          <button class="btn" data-accion="copias">Abrir la carpeta</button>
+        </div>
+      </section>
+
+      <section id="s-registro">
+        <h2>Registro</h2>
+        <p class="ayuda">Lo último que ha pasado, en vivo.</p>
+        <pre class="log" id="log">…</pre>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="aviso" class="glass"></div>
+
+<script>
+const T = "__TOKEN__";
+const $ = (s) => document.querySelector(s);
+
+async function pide(ruta, cuerpo) {
+  const opt = cuerpo
+    ? { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cuerpo) }
+    : {};
+  const r = await fetch(ruta + (ruta.includes("?") ? "&" : "?") + "t=" + T, opt);
+  return r.json();
+}
+
+let avisoTimer = null;
+function aviso(txt) {
+  const el = $("#aviso");
+  el.textContent = txt;
+  el.classList.add("on");
+  clearTimeout(avisoTimer);
+  avisoTimer = setTimeout(() => el.classList.remove("on"), 3200);
+}
+
+// ---------- secciones ----------
+const TITULOS = { estado:"Estado", emuladores:"Emuladores", ajustes:"Ajustes",
+                  copias:"Copias", registro:"Registro" };
+
+document.querySelectorAll(".nav").forEach((b) => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".nav").forEach((o) => o.classList.toggle("on", o === b));
+    const sec = b.dataset.sec;
+    document.querySelectorAll("section").forEach((s) => {
+      const activa = s.id === "s-" + sec;
+      s.classList.remove("on");
+      if (activa) { void s.offsetWidth; s.classList.add("on"); }   // reinicia la entrada
+    });
+    $("#titulo").textContent = TITULOS[sec];
+  });
+});
+
+document.querySelectorAll("[data-accion]").forEach((b) => {
+  b.addEventListener("click", async () => {
+    const r = await pide("/api/accion", { accion: b.dataset.accion });
+    aviso(r.msg || (r.ok ? "Hecho" : "No se pudo"));
+    carga();
+  });
+});
+
+// ---------- pintar ----------
+function fila(titulo, ayuda, control) {
+  const d = document.createElement("div");
+  d.className = "fila";
+  const t = document.createElement("div");
+  t.className = "txt";
+  const b = document.createElement("b"); b.textContent = titulo; t.appendChild(b);
+  if (ayuda) { const s = document.createElement("small"); s.textContent = ayuda; t.appendChild(s); }
+  d.appendChild(t);
+  if (control) { const v = document.createElement("div"); v.className = "val"; v.appendChild(control); d.appendChild(v); }
+  return d;
+}
+
+function interruptor(activo, alCambiar) {
+  const b = document.createElement("button");
+  b.className = "sw";
+  b.setAttribute("role", "switch");
+  b.setAttribute("aria-checked", activo ? "true" : "false");
+  b.addEventListener("click", () => {
+    const nuevo = b.getAttribute("aria-checked") !== "true";
+    b.setAttribute("aria-checked", nuevo ? "true" : "false");
+    alCambiar(nuevo);
+  });
+  return b;
+}
+
+// Los ajustes no se escriben aquí: vienen del daemon, con la misma forma que
+// se le mandan a la consola.
+function pintaAjustes(items) {
+  const cont = $("#ajustes");
+  cont.innerHTML = "";
+
+  for (const it of items) {
+    if (it.key && it.key.startsWith("emu:")) continue;    // van en su sección
+    let control = null;
+
+    if (it.type === 0) {
+      control = interruptor(it.value === "1" || it.value === 1, async (v) => {
+        const r = await pide("/api/set", { clave: it.key, valor: v ? "1" : "0" });
+        aviso(r.msg); carga();
+      });
+    } else if (it.type === 2 && it.options) {
+      control = document.createElement("select");
+      it.options.forEach((o, i) => {
+        const op = document.createElement("option");
+        op.value = String(i); op.textContent = o;
+        if (String(i) === String(it.value)) op.selected = true;
+        control.appendChild(op);
+      });
+      control.addEventListener("change", async () => {
+        const r = await pide("/api/set", { clave: it.key, valor: control.value });
+        aviso(r.msg); carga();
+      });
+    } else if (it.type === 1) {
+      control = document.createElement("input");
+      control.type = "number"; control.min = "1"; control.value = it.value;
+      control.addEventListener("change", async () => {
+        const r = await pide("/api/set", { clave: it.key, valor: control.value });
+        aviso(r.msg);
+      });
+    } else if (it.type === 4) {
+      control = document.createElement("button");
+      control.className = "btn"; control.textContent = "Hacerlo";
+      control.addEventListener("click", async () => {
+        const r = await pide("/api/set", { clave: it.key, valor: "1" });
+        aviso(r.msg); carga();
+      });
+    } else {
+      control = document.createElement("span");
+      control.className = "info"; control.textContent = it.value;
+    }
+
+    cont.appendChild(fila(it.label || it.key, it.help || "", control));
+  }
+}
+
+function pintaEmus(emus, items) {
+  const cont = $("#emus");
+  cont.innerHTML = "";
+
+  if (!emus.length) {
+    cont.appendChild(fila("No se ha encontrado ningún emulador",
+      "Se usará la carpeta de reserva. Pulsa «Volver a buscar» en Estado.", null));
+    return;
+  }
+
+  for (const e of emus) {
+    const item = items.find((i) => i.key === "emu:" + e.nombre);
+    const sw = interruptor(e.activo, async (v) => {
+      const r = await pide("/api/set", { clave: "emu:" + e.nombre, valor: v ? "1" : "0" });
+      aviso(r.msg); carga();
+    });
+    cont.appendChild(fila(e.nombre, e.ruta, item ? sw : null));
+  }
+}
+
+function pintaEstado(d) {
+  const cont = $("#stats");
+  cont.innerHTML = "";
+  const s = d.stats || {};
+  const pares = [
+    ["Conexiones de la consola", s.conexiones ?? 0],
+    ["Archivos movidos", s.archivos ?? 0],
+    ["Última sincronización", s.ultima || "todavía ninguna"],
+    ["Carpeta de copias", d.rutas.copias],
+    ["Carpeta de estado", d.rutas.estado],
+  ];
+  for (const [k, v] of pares) {
+    const sp = document.createElement("span");
+    sp.className = String(v).includes("/") || String(v).includes("\\") ? "ruta" : "info";
+    sp.textContent = String(v);
+    cont.appendChild(fila(k, "", sp));
+  }
+  if (d.windows) {
+    cont.appendChild(fila("Abrir al iniciar sesión",
+      "Deja el icono junto al reloj listo desde el arranque",
+      interruptor(d.inicio, async () => {
+        const r = await pide("/api/accion", { accion: "inicio" });
+        aviso(r.msg); carga();
+      })));
+  }
+}
+
+function pintaCopias(cs) {
+  const cont = $("#copias");
+  cont.innerHTML = "";
+  if (!cs.length) {
+    cont.appendChild(fila("Todavía no hay ninguna copia",
+      "Se crean solas justo antes de sobrescribir una partida.", null));
+    return;
+  }
+  for (const c of cs) {
+    const sp = document.createElement("span");
+    sp.className = "info";
+    sp.textContent = c.archivos + " archivo" + (c.archivos === 1 ? "" : "s");
+    cont.appendChild(fila(c.nombre, c.cuando, sp));
+  }
+}
+
+async function carga() {
+  let d;
+  try { d = await pide("/api/estado"); }
+  catch { $("#dock-estado").textContent = "sin daemon"; $("#punto").style.background = "var(--err)"; return; }
+
+  $("#c-pc").textContent = d.nombre;
+  $("#c-emu").textContent = d.emulador || "ninguno";
+  $("#c-red").textContent = (d.ips[0] || "127.0.0.1") + ":" + d.puerto;
+  $("#punto").style.background = d.emulador ? "var(--ok)" : "var(--warn)";
+  $("#dock-estado").textContent = d.emulador ? "listo" : "sin emulador";
+
+  pintaEstado(d);
+  pintaEmus(d.emuladores || [], d.ajustes || []);
+  pintaAjustes(d.ajustes || []);
+  pintaCopias(d.copias || []);
+  $("#log").textContent = (d.registro || []).join("\n") || "Todavía no hay nada.";
+}
+
+carga();
+setInterval(carga, 5000);
+
+// ---------- el fondo vivo, como en la consola ----------
+(function () {
+  const c = $("#fondo");
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const ctx = c.getContext("2d");
+  let w = 0, h = 0;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+
+  function medir() {
+    w = innerWidth; h = innerHeight;
+    c.width = w * dpr; c.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener("resize", medir);
+  medir();
+
+  // El acento y dos hermanos suyos, rotando los canales.
+  const base = [74, 216, 230];
+  const manchas = [
+    { x:.24, y:.18, sx:.041, sy:.033, ph:0,   a:.30, col:base },
+    { x:.78, y:.66, sx:.029, sy:.047, ph:2.1, a:.22, col:[base[2],base[0],base[1]] },
+    { x:.52, y:.90, sx:.037, sy:.025, ph:4.3, a:.16, col:[base[1],base[2],base[0]] },
+  ];
+
+  function frame(t) {
+    t /= 1000;
+    ctx.clearRect(0, 0, w, h);
+    for (const m of manchas) {
+      const cx = (m.x + Math.sin(t * m.sx + m.ph) * .10) * w;
+      const cy = (m.y + Math.cos(t * m.sy + m.ph) * .08) * h;
+      const r = Math.max(w, h) * .42;
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0,  `rgba(${m.col.join(",")},${m.a})`);
+      g.addColorStop(.55,`rgba(${m.col.join(",")},${m.a * .3})`);
+      g.addColorStop(1,  `rgba(${m.col.join(",")},0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

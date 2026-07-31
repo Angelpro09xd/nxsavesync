@@ -24,5 +24,12 @@ tools/preview/preview
 tools/preview/musica
 tools/preview/*.o
 tools/preview/salida*/
+tools/preview/anim/
 tools/preview/acentos/
 tools/preview/*.wav
+
+# Instalador de Windows: lo que se descarga y lo que se monta
+windows/cache/
+windows/build/
+windows/assets/
+NXSaveSync-Instalador.exe

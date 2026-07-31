@@ -57,6 +57,11 @@ static SDL_Texture *g_blur_soft;    // 320x180, desenfoque corto
 static SDL_Texture *g_blur_deep;    // 320x180, desenfoque largo
 static SDL_Texture *g_scratch_a;    // contenido del cristal, sin recortar
 static SDL_Texture *g_scratch_b;    // el mismo, ya recortado
+static SDL_Texture *g_layer;        // capa que se vuelca con opacidad y escala
+
+// Destino logico del dibujo: la pantalla, o una capa si hay una abierta. Todo
+// lo que antes volvia a NULL vuelve aqui, o el cristal se saldria de la capa.
+static SDL_Texture *g_target;
 
 #define BLUR_W 320
 #define BLUR_H 180
@@ -573,6 +578,7 @@ bool ui_init(void)
     g_blur_deep = make_target(BLUR_W, BLUR_H);
     g_scratch_a = make_target(UI_W, UI_H);
     g_scratch_b = make_target(UI_W, UI_H);
+    g_layer     = make_target(UI_W, UI_H);
 
     if (!g_scene || !g_blur_soft || !g_blur_deep || !g_scratch_a || !g_scratch_b)
         return false;
@@ -642,7 +648,7 @@ void ui_exit(void)
 
     SDL_Texture *all[] = { g_scene, g_mip[0], g_mip[1], g_mip[2], g_mip[3],
                            g_blur_soft, g_blur_deep, g_scratch_a, g_scratch_b,
-                           g_glow, g_vig, g_noise };
+                           g_layer, g_glow, g_vig, g_noise };
     for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++)
         if (all[i]) SDL_DestroyTexture(all[i]);
 
@@ -794,10 +800,51 @@ void ui_backdrop_end(void)
     blit_full(g_mip[1], g_blur_soft);
     blit_full(g_mip[3], g_blur_deep);
 
-    SDL_SetRenderTarget(g_ren, NULL);
+    SDL_SetRenderTarget(g_ren, g_target);
     SDL_SetTextureBlendMode(g_scene, SDL_BLENDMODE_NONE);
     SDL_RenderCopy(g_ren, g_scene, NULL, NULL);
     SDL_SetTextureBlendMode(g_scene, SDL_BLENDMODE_BLEND);
+}
+
+// --------------------------------------------------------------------------
+// capa de composicion
+// --------------------------------------------------------------------------
+
+void ui_layer_begin(void)
+{
+    if (!g_layer) return;
+
+    g_target = g_layer;
+    SDL_SetRenderTarget(g_ren, g_layer);
+
+    SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 0);
+    SDL_RenderClear(g_ren);
+    SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);
+}
+
+void ui_layer_end(float alpha, float scale, int cx, int cy, int dx, int dy)
+{
+    if (!g_layer) return;
+
+    g_target = NULL;
+    SDL_SetRenderTarget(g_ren, NULL);
+
+    if (alpha <= 0.0f) return;
+    if (alpha > 1.0f) alpha = 1.0f;
+
+    // Un punto p va a parar a c + (p - c) * escala, asi que el origen de la
+    // capa cae en c - c * escala.
+    SDL_Rect dst = {
+        (int)(cx - cx * scale) + dx,
+        (int)(cy - cy * scale) + dy,
+        (int)(UI_W * scale),
+        (int)(UI_H * scale),
+    };
+
+    SDL_SetTextureAlphaMod(g_layer, (u8)(alpha * 255.0f));
+    SDL_RenderCopy(g_ren, g_layer, NULL, &dst);
+    SDL_SetTextureAlphaMod(g_layer, 255);
 }
 
 // --------------------------------------------------------------------------
@@ -982,7 +1029,8 @@ void ui_glass_end(void)
 {
     if (g_gp_n == 0) return;
 
-    // 1. Sombras, directamente sobre lo que ya haya en pantalla.
+    // 1. Sombras, sobre lo que ya haya en el destino (pantalla o capa).
+    SDL_SetRenderTarget(g_ren, g_target);
     for (int i = 0; i < g_gp_n; i++) glass_shadow(&g_gp[i]);
 
     // 2. El contenido del cristal, todavia rectangular.
@@ -1015,8 +1063,8 @@ void ui_glass_end(void)
     SDL_SetTextureBlendMode(g_scratch_a, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);
 
-    // 4. A pantalla.
-    SDL_SetRenderTarget(g_ren, NULL);
+    // 4. Al destino.
+    SDL_SetRenderTarget(g_ren, g_target);
     for (int i = 0; i < g_gp_n; i++) {
         gpanel_t *p = &g_gp[i];
         SDL_Rect rc = { p->x, p->y, p->w, p->h };
@@ -1817,8 +1865,24 @@ static void arc_head(int cx, int cy, int radius, int thick, float at_deg, color_
 
 void ui_logo(int cx, int cy, int size, color_t c1, color_t c2, color_t dot)
 {
-    int r     = size * 27 / 100;
-    int thick = size * 9 / 100;
+    // Una lente de cristal con el ciclo dentro. Es el mismo dibujo que el icono
+    // del homebrew (ver switch/make_icon.py), con las piezas que se pueden
+    // hacer en vivo: luz detras, cuerpo translucido, canto asimetrico y arcos.
+    int R = size * 34 / 100;
+    if (R < 6) R = 6;
+
+    ui_glow(cx, cy - R / 3, R * 13 / 10, R * 13 / 10, c1, 90);
+
+    ui_circle(cx, cy, R, ui_alpha(COL_GLASS, 46));
+
+    // El canto no brilla igual por todas partes: la luz entra por arriba a la
+    // izquierda. Esa asimetria es lo que lo hace parecer vidrio.
+    int grueso = R / 24 + 1;
+    ui_arc(cx, cy, R, grueso, 0.0f, 360.0f, (color_t){ 255, 255, 255, 46 });
+    ui_arc(cx, cy, R, grueso, 178.0f, 348.0f, (color_t){ 255, 255, 255, 185 });
+
+    int r     = R * 60 / 100;
+    int thick = R * 20 / 100;
     if (thick < 2) thick = 2;
 
     ui_arc(cx, cy, r, thick, 195.0f, 350.0f, c1);
@@ -1827,7 +1891,7 @@ void ui_logo(int cx, int cy, int size, color_t c1, color_t c2, color_t dot)
     ui_arc(cx, cy, r, thick, 15.0f, 170.0f, c2);
     arc_head(cx, cy, r, thick, 170.0f, c2);
 
-    int rr = size * 5 / 100;
+    int rr = R * 11 / 100;
     if (rr < 2) rr = 2;
     ui_circle(cx, cy, rr, dot);
 }

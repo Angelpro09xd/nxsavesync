@@ -228,18 +228,32 @@ bool audio_enabled(void)        { return g_on; }
 // musica de fondo
 // --------------------------------------------------------------------------
 //
-// Ambiente generativo, a juego con el cristal: un acorde de cuatro voces que
-// va rotando por Am - F - C - G, cada nota con dos osciladores desafinados un
-// pelin entre si para que "flote", y encima repiques de cristal con parciales
-// de campana. Debajo, una capa de aire casi inaudible que rellena el silencio.
+// Ambiente alegre, a juego con el cristal. Tres capas:
 //
-// El bucle dura 32 segundos exactos y se cose consigo mismo al final, asi que
-// no hay costura audible al repetir.
+//   1. El acorde, cuatro voces rotando por Do - Sol - Lam - Fa (I-V-vi-IV), que
+//      es la progresion mas luminosa que existe. Cada nota lleva dos
+//      osciladores desafinados un pelin entre si para que "flote".
+//   2. Un arpegio corto que sube y baja por las notas del acorde. Es lo que le
+//      da alegria: sin el, cuatro voces largas suenan a sala de espera.
+//   3. Repiques con parciales de campana, y debajo una capa de aire.
+//
+// El bucle dura 32 segundos y se cose consigo mismo, asi que no hay costura
+// audible al repetir.
 
 #define MUS_SECONDS  32
 #define MUS_FADE_S   2                       // cola que se pliega sobre el inicio
 #define MUS_FRAMES   (MUS_SECONDS * RATE)
 #define MUS_FADE     (MUS_FADE_S * RATE)
+
+#define MUS_CHORDS_N 8                       // dos vueltas de cuatro acordes
+#define MUS_CHORD_S  (MUS_SECONDS / (float)MUS_CHORDS_N)   // 4 s cada uno
+
+// Corcheas a 93,75 pulsos por minuto. El numero no es redondo a proposito:
+// tiene que caber un numero *entero* de corcheas en el bucle. Con 0,3125 s
+// entraban 102,4 y al dar la vuelta el arpegio saltaba de nota a media
+// envolvente: un chasquido cada 32 segundos.
+#define MUS_STEP_S   0.32f
+#define MUS_STEPS    ((int)(MUS_SECONDS / MUS_STEP_S))     // 100 exactas
 
 #define SINE_BITS 12
 #define SINE_SIZE (1 << SINE_BITS)
@@ -247,32 +261,44 @@ bool audio_enabled(void)        { return g_on; }
 static float g_sine[SINE_SIZE];
 
 // Tabla en vez de llamar a sin() por muestra: son millon y medio de fotogramas
-// por dos docenas de osciladores, y en la consola eso se nota.
+// por unas cuantas docenas de osciladores, y en la consola eso se nota.
 static void sine_table_init(void)
 {
     for (int i = 0; i < SINE_SIZE; i++)
         g_sine[i] = (float)sin(2.0 * M_PI * i / SINE_SIZE);
 }
 
-static inline float osc(double *phase, double inc)
+static inline float sine_at(double phase)
 {
-    *phase += inc;
-    if (*phase >= 1.0) *phase -= 1.0;
-
-    double f = *phase * SINE_SIZE;
+    double f = phase * SINE_SIZE;
     int    i = (int)f;
     float  k = (float)(f - i);
     return g_sine[i & (SINE_SIZE - 1)] * (1.0f - k)
          + g_sine[(i + 1) & (SINE_SIZE - 1)] * k;
 }
 
-// Am - F - C - G. Cuatro voces por acorde, con el bajo abajo y las notas de
-// color arriba; el movimiento entre acordes es corto a proposito.
+static inline float osc(double *phase, double inc)
+{
+    *phase += inc;
+    if (*phase >= 1.0) *phase -= 1.0;
+    return sine_at(*phase);
+}
+
+// Do - Sol - Lam - Fa, dos vueltas. Cuatro voces: bajo, relleno y dos arriba.
+// La voz de arriba dibuja mi - re - mi - do, que es una melodia por si sola.
 static const float MUS_CHORDS[4][4] = {
-    { 110.00f, 164.81f, 220.00f, 329.63f },   // Am
-    {  87.31f, 174.61f, 261.63f, 349.23f },   // F
-    { 130.81f, 196.00f, 261.63f, 392.00f },   // C
-    {  98.00f, 146.83f, 246.94f, 392.00f },   // G
+    { 130.81f, 196.00f, 261.63f, 329.63f },   // Do   (Do3 Sol3 Do4 Mi4)
+    {  98.00f, 146.83f, 246.94f, 293.66f },   // Sol  (Sol2 Re3 Si3 Re4)
+    { 110.00f, 164.81f, 261.63f, 329.63f },   // Lam  (La2 Mi3 Do4 Mi4)
+    {  87.31f, 130.81f, 220.00f, 261.63f },   // Fa   (Fa2 Do3 La3 Do4)
+};
+
+// Notas por las que corre el arpegio en cada acorde, ya en octava alta.
+static const float MUS_ARP[4][4] = {
+    { 523.25f, 659.25f, 783.99f, 659.25f },   // Do5 Mi5 Sol5 Mi5
+    { 493.88f, 587.33f, 783.99f, 587.33f },   // Si4 Re5 Sol5 Re5
+    { 523.25f, 659.25f, 880.00f, 659.25f },   // Do5 Mi5 La5 Mi5
+    { 523.25f, 698.46f, 880.00f, 698.46f },   // Do5 Fa5 La5 Fa5
 };
 
 // Distancia en el tiempo teniendo en cuenta que el bucle da la vuelta.
@@ -282,45 +308,48 @@ static float wrap_dist(float t, float center)
     return d > MUS_SECONDS / 2.0f ? MUS_SECONDS - d : d;
 }
 
-// Envolvente de cada acorde: una campana suave centrada en su turno. Se solapan
-// entre si, asi que un acorde entra mientras el anterior aun se apaga y nunca
-// hay un corte.
+// Envolvente de cada acorde: una campana suave centrada en su turno. Se solapan,
+// asi que uno entra mientras el anterior aun se apaga y nunca hay un corte.
 static float chord_env(float t, int k)
 {
-    const float half = 7.0f;
-    float d = wrap_dist(t, k * (MUS_SECONDS / 4.0f) + MUS_SECONDS / 8.0f);
+    const float half = MUS_CHORD_S * 1.55f;
+    float d = wrap_dist(t, (k + 0.5f) * MUS_CHORD_S);
     if (d >= half) return 0.0f;
     float x = cosf(d / half * (float)M_PI / 2.0f);
     return x * x;
 }
 
-// Repiques de cristal: cuando, a que altura y hacia que lado.
-static const struct { float at, freq, pan; } MUS_PINGS[] = {
-    {  2.4f,  659.25f, -0.55f },   // E5
-    {  6.9f,  987.77f,  0.45f },   // B5
-    { 11.2f,  880.00f, -0.30f },   // A5
-    { 15.6f, 1318.51f,  0.60f },   // E6
-    { 19.9f,  783.99f, -0.50f },   // G5
-    { 24.3f, 1046.50f,  0.35f },   // C6
-    { 28.7f,  659.25f, -0.20f },
-};
-#define MUS_PING_N ((int)(sizeof(MUS_PINGS) / sizeof(MUS_PINGS[0])))
-
 // Parciales de campana. Las relaciones no son enteras a proposito: eso es lo
 // que distingue un cristal de una flauta.
 static const struct { float ratio, amp, decay; } BELL[] = {
-    { 1.00f, 1.00f, 1.6f },
-    { 2.00f, 0.42f, 1.1f },
-    { 2.76f, 0.28f, 0.8f },
-    { 5.40f, 0.12f, 0.5f },
+    { 1.00f, 1.00f, 1.5f },
+    { 2.00f, 0.44f, 1.0f },
+    { 2.76f, 0.30f, 0.7f },
+    { 5.40f, 0.14f, 0.45f },
 };
 #define BELL_N ((int)(sizeof(BELL) / sizeof(BELL[0])))
+
+// Repiques: cuando, a que altura y hacia que lado. Todos son notas del acorde
+// que suena en ese momento, asi que nunca choca nada.
+static const struct { float at, freq, pan; } MUS_PINGS[] = {
+    {  3.1f, 1046.50f, -0.55f },   // Do6
+    {  7.4f,  987.77f,  0.45f },   // Si5
+    { 11.3f, 1318.51f, -0.30f },   // Mi6
+    { 15.7f, 1174.66f,  0.60f },   // Re6
+    { 19.2f, 1046.50f, -0.50f },
+    { 23.6f, 1567.98f,  0.35f },   // Sol6
+    { 27.4f, 1318.51f, -0.20f },
+    { 30.8f, 1760.00f,  0.50f },   // La6
+};
+#define MUS_PING_N ((int)(sizeof(MUS_PINGS) / sizeof(MUS_PINGS[0])))
 
 static volatile bool g_music_ready;
 static bool g_music_on = true;
 static bool g_music_playing;
 
 #define MUS_CHANNEL 0
+
+int audio_music_frames(void) { return MUS_FRAMES + MUS_FADE; }
 
 void audio_music_render(int16_t *out)
 {
@@ -342,21 +371,27 @@ void audio_music_render(int16_t *out)
         float l = 0.0f, r = 0.0f;
 
         // --- el acorde ---
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < MUS_CHORDS_N; k++) {
             float env = chord_env(t, k);
             if (env < 0.002f) continue;          // acorde callado: ni se calcula
 
+            const float *notas = MUS_CHORDS[k % 4];
+
             for (int v = 0; v < 4; v++) {
-                float f = MUS_CHORDS[k][v];
+                float f = notas[v];
 
                 // Cada voz respira a su ritmo, para que el acorde no suene fijo.
-                float breathe = 0.82f + 0.18f * sinf(t * (0.13f + v * 0.037f) * 6.2831f
+                // Multiplos de 1/32 Hz: asi cada voz completa un numero entero
+                // de respiraciones dentro del bucle y el nivel coincide al dar
+                // la vuelta.
+                float breathe = 0.84f + 0.16f * sinf(t * ((6 + v) / 32.0f) * 6.2831f
                                                      + k * 1.7f + v);
-                float a = env * breathe * (v == 0 ? 0.34f : 0.22f);
+                float a = env * breathe * (v == 0 ? 0.30f : 0.19f);
 
-                float s = osc(&ph[k][v][0], f            / RATE)
-                        + osc(&ph[k][v][1], f * 1.0016f  / RATE) * 0.9f
-                        + osc(&ph[k][v][2], f * 0.5f     / RATE) * 0.30f;
+                double *p = ph[k % 4][v];
+                float s = osc(&p[0], f           / RATE)
+                        + osc(&p[1], f * 1.0016f / RATE) * 0.9f
+                        + osc(&p[2], f * 0.5f    / RATE) * 0.26f;
 
                 // Las voces graves al centro y las agudas abiertas: da anchura
                 // sin descolocar el bajo.
@@ -366,26 +401,57 @@ void audio_music_render(int16_t *out)
             }
         }
 
+        // --- el arpegio ---
+        //
+        // Es lo que separa "ambiente alegre" de "sala de espera": notas cortas y
+        // brillantes que suben y bajan por el acorde. La fase se deduce del
+        // tiempo, asi que no hace falta guardar estado y el bucle sigue exacto.
+        {
+            int   paso = (int)(t / MUS_STEP_S);
+            float dt   = t - paso * MUS_STEP_S;
+
+            for (int atras = 0; atras < 2; atras++) {   // la nota anterior aun suena
+                int   pp = paso - atras;
+                float pt = dt + atras * MUS_STEP_S;
+                if (pp < 0) { pp += MUS_STEPS; pt = dt + atras * MUS_STEP_S; }
+
+                float e = expf(-pt / 0.30f);
+                if (e < 0.004f) continue;
+
+                int acorde = (int)((pp * MUS_STEP_S) / MUS_CHORD_S) % 4;
+                // Las cuatro notas de la fila ya suben y bajan (la ultima repite
+                // la segunda), y cuatro divide a cien: el ciclo cierra justo al
+                // dar la vuelta el bucle.
+                float f = MUS_ARP[acorde][pp % 4];
+
+                // Timbre de pua: el fundamental con dos armonicos flojos.
+                float s = sine_at(fmod((double)pt * f, 1.0))
+                        + sine_at(fmod((double)pt * f * 2.0, 1.0)) * 0.30f
+                        + sine_at(fmod((double)pt * f * 3.0, 1.0)) * 0.12f;
+
+                // Va alternando de lado, que da sensacion de movimiento.
+                float pan = (pp % 2) ? 0.34f : -0.34f;
+                float a = 0.062f * e;
+                l += s * a * (1.0f - pan) * 0.5f;
+                r += s * a * (1.0f + pan) * 0.5f;
+            }
+        }
+
         // --- repiques de cristal ---
         for (int p = 0; p < MUS_PING_N; p++) {
             float dt = t - MUS_PINGS[p].at;
             if (dt < 0.0f) dt += MUS_SECONDS;    // el que cae al final da la vuelta
-            if (dt > 4.0f) continue;
+            if (dt > 3.5f) continue;
 
             float s = 0.0f;
             for (int b = 0; b < BELL_N; b++) {
                 float e = expf(-dt / BELL[b].decay);
                 if (e < 0.001f) continue;
-                double inc = MUS_PINGS[p].freq * BELL[b].ratio / RATE;
-                // Fase deducida del tiempo: asi no hace falta guardar estado por
-                // repique y el bucle sigue siendo exacto.
                 double phase = fmod((double)dt * MUS_PINGS[p].freq * BELL[b].ratio, 1.0);
-                (void)inc;
-                float x = g_sine[(int)(phase * SINE_SIZE) & (SINE_SIZE - 1)];
-                s += x * BELL[b].amp * e;
+                s += sine_at(phase) * BELL[b].amp * e;
             }
 
-            float a = 0.085f;
+            float a = 0.070f;
             l += s * a * (1.0f - MUS_PINGS[p].pan) * 0.5f;
             r += s * a * (1.0f + MUS_PINGS[p].pan) * 0.5f;
         }
@@ -394,7 +460,7 @@ void audio_music_render(int16_t *out)
         rnd ^= rnd << 13; rnd ^= rnd >> 17; rnd ^= rnd << 5;
         float n = ((float)(int32_t)rnd / 2147483648.0f);
         air_lp += (n - air_lp) * 0.016;          // paso bajo de un polo
-        float air = (float)air_lp * 0.055f * (0.6f + 0.4f * sinf(t * 0.21f * 6.2831f));
+        float air = (float)air_lp * 0.045f * (0.6f + 0.4f * sinf(t * (7 / 32.0f) * 6.2831f));
         l += air;
         r += air;
 
@@ -426,8 +492,6 @@ static int music_thread(void *ud)
     g_music_ready = true;
     return 0;
 }
-
-int audio_music_frames(void) { return MUS_FRAMES + MUS_FADE; }
 
 void audio_music_init(void)
 {

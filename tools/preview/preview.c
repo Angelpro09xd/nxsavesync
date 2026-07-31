@@ -128,6 +128,8 @@ static void data_init(void)
 // --------------------------------------------------------------------------
 
 static int g_sel = 2, g_top = 0, g_row = 1;
+// Cuanto ha entrado la hoja: 1 = del todo. Con --anim se retrata a medias.
+static float g_anim = 1.0f;
 
 static scr_ctx_t ctx(nav_t nav)
 {
@@ -233,14 +235,14 @@ static void draw_screen(int screen, const ui_input_t *in)
         scr_dialog(&c, in, "El PC tiene cambios", "Tomodachi Life",
                    "El PC tiene 7 archivo(s) mas nuevos y 1 borrado desde la "
                    "ultima vez. Elige con que version se queda la consola.",
-                   ch, c.accent);
+                   ch, c.accent, g_anim);
         break;
     }
 
     case 5:
         scr_topbar(&c, "Juegos", "NX Save Sync  ·  Angelpro09_Dev");
         scr_hints("Sincronizando...");
-        scr_sync(&c, "Sincronizando", "Mario Kart 8 Deluxe", log, 6, 0.62f, false);
+        scr_sync(&c, "Sincronizando", "Mario Kart 8 Deluxe", log, 6, 0.62f, false, g_anim);
         break;
 
     case 6:
@@ -256,7 +258,7 @@ static void draw_screen(int screen, const ui_input_t *in)
         scr_games(&c, in, g_games, NGAMES, g_sel, g_top,
                   "Gana el ultimo jugado", NULL, NULL, NULL);
         scr_hints("A cambiar   arriba/abajo elegir   B volver");
-        scr_game_opts(&c, in, &g_games[g_sel], "Gana el ultimo jugado", false, 0);
+        scr_game_opts(&c, in, &g_games[g_sel], "Gana el ultimo jugado", false, 0, g_anim);
         break;
 
     case 8: {
@@ -270,7 +272,7 @@ static void draw_screen(int screen, const ui_input_t *in)
         }
         scr_rows(&c, in, rows, 7, 1, 0, 6);
         scr_hints("A cambiar   Y refrescar   B volver");
-        scr_pc_cfg(&c, in, "angel-LOQ-15ARP9", rows, 7, 2, true);
+        scr_pc_cfg(&c, in, "angel-LOQ-15ARP9", rows, 7, 2, true, g_anim);
         break;
     }
     }
@@ -296,6 +298,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--live"))       live = true;
         else if (!strcmp(argv[i], "--debug")) debug = true;
         else if (!strcmp(argv[i], "--sel") && i + 1 < argc) g_sel = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--anim") && i + 1 < argc) g_anim = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--only") && i + 1 < argc) only = atoi(argv[++i]);
         else outdir = argv[i];
     }

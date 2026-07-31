@@ -25,7 +25,7 @@
 #include "discovery.h"
 #include "notify.h"
 
-#define APP_VERSION "4.1"
+#define APP_VERSION "4.2"
 
 #define LOG_LINES 10
 #define VIEW_MAX  512
@@ -55,6 +55,14 @@ static u32  g_toast_until;
 static float g_toast_in;
 
 static color_t g_accent;
+
+// Animaciones de entrada y salida. Una hoja no puede cerrarse en el acto: hay
+// que seguir dibujandola mientras se va, asi que el cierre se pide y se cumple
+// unos fotogramas despues.
+static float g_modal_in;
+static bool  g_modal_closing;
+static float g_view_in = 1.0f;    // cambio de seccion
+static float g_sheet_in;          // hojas de sincronizacion y dialogos
 
 // registro de la sincronizacion
 static char   g_log[LOG_LINES][160];
@@ -213,6 +221,22 @@ static int draw_frame(const ui_input_t *in, const scr_ctx_t *c,
     return nav_hit;
 }
 
+// Pide cerrar la hoja. Se cierra de verdad cuando termina de irse.
+static void modal_close(void)
+{
+    if (g_modal == MODAL_NONE || g_modal_closing) return;
+    g_modal_closing = true;
+    audio_play(SND_BACK);
+}
+
+static void modal_open(modal_t m)
+{
+    g_modal = m;
+    g_modal_closing = false;
+    g_modal_in = 0.0f;
+    g_row_sel = 0;
+}
+
 static void draw_toast(void)
 {
     bool visible = ui_ticks() < g_toast_until && g_toast[0];
@@ -247,9 +271,10 @@ static void sync_redraw(void)
                ? (float)g_progress_done / (float)g_progress_total : -1.0f;
     if (g_sync_finished) prog = 1.0f;
 
+    g_sheet_in = ui_approach(g_sheet_in, 1.0f, 15.0f);
     scr_sync(&c, g_sync_finished ? "Sincronizacion terminada" : "Sincronizando",
              g_progress_title, (const char (*)[160])g_log, g_log_n,
-             prog, g_sync_finished);
+             prog, g_sync_finished, g_sheet_in);
 
     ui_ripples_draw();
     ui_debug_draw();
@@ -287,23 +312,34 @@ static int dialog(const char *heading, const char *name, const char *body,
 {
     audio_play(SND_WARN);
 
+    float anim = 0.0f;
+    int   elegido = -1;
+
     for (;;) {
         ui_input_t in;
         if (!ui_frame_begin(&in)) return 2;
+
+        anim = ui_approach(anim, elegido < 0 ? 1.0f : 0.0f, 16.0f);
 
         scr_ctx_t c = view_ctx();
         draw_frame(&in, &c, "Juegos", "NX Save Sync  ·  Angelpro09_Dev", false);
         scr_hints("Elige una opcion");
 
-        int hit = scr_dialog(&c, &in, heading, name, body, ch, tint);
+        int hit = scr_dialog(&c, &in, heading, name, body, ch, tint, anim);
 
         ui_ripples_draw();
         ui_debug_draw();
         ui_frame_end();
 
-        if ((in.down & HidNpadButton_A) || hit == 0) { audio_play(SND_SELECT); return 0; }
-        if ((in.down & HidNpadButton_X) || hit == 1) { audio_play(SND_SELECT); return 1; }
-        if ((in.down & HidNpadButton_B) || hit == 2) { audio_play(SND_BACK);   return 2; }
+        // Una vez elegido, el dialogo se va antes de devolver la respuesta.
+        if (elegido >= 0) {
+            if (anim < 0.02f) return elegido;
+            continue;
+        }
+
+        if ((in.down & HidNpadButton_A) || hit == 0) { audio_play(SND_SELECT); elegido = 0; }
+        if ((in.down & HidNpadButton_X) || hit == 1) { audio_play(SND_SELECT); elegido = 1; }
+        if ((in.down & HidNpadButton_B) || hit == 2) { audio_play(SND_BACK);   elegido = 2; }
     }
 }
 
@@ -440,6 +476,8 @@ static void refresh_states(void)
 // Espera a que el usuario cierre la hoja de sincronizacion.
 static void wait_dismiss(void)
 {
+    bool salir = false;
+
     for (;;) {
         ui_input_t in;
         if (!ui_frame_begin(&in)) break;
@@ -447,14 +485,18 @@ static void wait_dismiss(void)
         scr_ctx_t c = view_ctx();
         draw_frame(&in, &c, "Juegos", "NX Save Sync  ·  Angelpro09_Dev", false);
         scr_hints("A   volver");
+        g_sheet_in = ui_approach(g_sheet_in, salir ? 0.0f : 1.0f, 15.0f);
         scr_sync(&c, "Sincronizacion terminada", g_progress_title,
-                 (const char (*)[160])g_log, g_log_n, 1.0f, true);
+                 (const char (*)[160])g_log, g_log_n, 1.0f, true, g_sheet_in);
 
         ui_ripples_draw();
         ui_debug_draw();
         ui_frame_end();
 
-        if ((in.down & (HidNpadButton_A | HidNpadButton_B)) || in.tap) break;
+        // Al aceptar, la hoja se va antes de devolver el control: cerrarla de
+        // golpe cortaba la animacion a medias.
+        if ((in.down & (HidNpadButton_A | HidNpadButton_B)) || in.tap) salir = true;
+        if (salir && g_sheet_in < 0.02f) break;
     }
 }
 
@@ -472,6 +514,7 @@ static void run_sync(size_t from, size_t count)
     g_progress_title[0] = '\0';
     g_progress_done = g_progress_total = 0;
     g_sync_finished = false;
+    g_sheet_in = 0.0f;
 
     net_t n;
     if (!connect_now(&n, false)) {
@@ -598,7 +641,7 @@ static void input_games(const ui_input_t *in)
 
     if (in->down & HidNpadButton_A) { audio_play(SND_SELECT); run_sync(g_game_sel, 1); }
     if (in->down & HidNpadButton_Y) { audio_play(SND_SELECT); run_sync(0, g_games.n); }
-    if (in->down & HidNpadButton_X) { audio_play(SND_SELECT); g_modal = MODAL_GAME; g_row_sel = 0; }
+    if (in->down & HidNpadButton_X) { audio_play(SND_SELECT); modal_open(MODAL_GAME); }
 }
 
 static void input_users(const ui_input_t *in)
@@ -626,6 +669,7 @@ static void input_users(const ui_input_t *in)
             reload_games();
             toast("Perfil: %s", current_user_name());
             g_nav = NAV_GAMES;
+            g_view_in = 0.0f;
         }
     }
 }
@@ -815,7 +859,7 @@ static void input_settings(const ui_input_t *in)
         g_set.bg_interval = (u16)(min * 60);
         break;
     }
-    case 11: audio_play(SND_SELECT); g_modal = MODAL_PCCFG; pccfg_fetch(); return;
+    case 11: audio_play(SND_SELECT); modal_open(MODAL_PCCFG); pccfg_fetch(); return;
     case 12:
         audio_play(SND_SELECT);
         if (g_games.n) run_sync(0, g_games.n);
@@ -840,7 +884,10 @@ static void modal_game(const ui_input_t *in, const scr_ctx_t *c)
         if (g_set.games[i].title_id == g->application_id) r = &g_set.games[i];
 
     int hit = scr_game_opts(c, in, &g_vgames[g_game_sel],
-                            policy_label(r ? r->policy : POLICY_ASK), ex, g_row_sel);
+                            policy_label(r ? r->policy : POLICY_ASK), ex, g_row_sel,
+                            g_modal_in);
+
+    if (g_modal_closing) return;      // mientras se va no acepta ordenes
 
     if (hit >= 0 && hit != g_row_sel) { g_row_sel = hit; audio_play(SND_MOVE); }
 
@@ -864,11 +911,7 @@ static void modal_game(const ui_input_t *in, const scr_ctx_t *c)
         audio_play(SND_TOGGLE);
     }
 
-    if (in->down & (HidNpadButton_B | HidNpadButton_X)) {
-        g_modal = MODAL_NONE;
-        g_row_sel = 0;
-        audio_play(SND_BACK);
-    }
+    if (in->down & (HidNpadButton_B | HidNpadButton_X)) modal_close();
 }
 
 // --------------------------------------------------------------------------
@@ -937,11 +980,14 @@ static void modal_pccfg(const ui_input_t *in, const scr_ctx_t *c)
         rows[i].vcolor = g_cfg[i].type == CFG_INFO ? ui_alpha(COL_DIM, 220) : g_accent;
     }
 
-    int hit = scr_pc_cfg(c, in, g_server_name, rows, (int)g_cfg_n, g_cfg_sel, g_cfg_ok);
+    int hit = scr_pc_cfg(c, in, g_server_name, rows, (int)g_cfg_n, g_cfg_sel, g_cfg_ok,
+                         g_modal_in);
+
+    if (g_modal_closing) return;
 
     if (!g_cfg_ok || g_cfg_n == 0) {
         if (in->down & HidNpadButton_Y) pccfg_fetch();
-        if (in->down & HidNpadButton_B) { g_modal = MODAL_NONE; audio_play(SND_BACK); }
+        if (in->down & HidNpadButton_B) modal_close();
         return;
     }
 
@@ -952,7 +998,7 @@ static void modal_pccfg(const ui_input_t *in, const scr_ctx_t *c)
     if (in->down & HidNpadButton_Up)   g_cfg_sel = g_cfg_sel ? g_cfg_sel - 1 : (int)g_cfg_n - 1;
     if (g_cfg_sel != before) audio_play(SND_MOVE);
 
-    if (in->down & HidNpadButton_B) { g_modal = MODAL_NONE; audio_play(SND_BACK); return; }
+    if (in->down & HidNpadButton_B) { modal_close(); return; }
     if (in->down & HidNpadButton_Y) { pccfg_fetch(); return; }
 
     bool fwd  = (in->down & (HidNpadButton_A | HidNpadButton_Right)) != 0
@@ -1078,6 +1124,19 @@ int main(int argc, char **argv)
         update_accent();
         audio_music_poll();
 
+        g_view_in = ui_approach(g_view_in, 1.0f, 12.0f);
+
+        // La hoja se va sola cuando se ha pedido cerrarla, y solo entonces deja
+        // de existir. Cerrar en el acto cortaba la animacion por la mitad.
+        g_modal_in = ui_approach(g_modal_in,
+                                 (g_modal != MODAL_NONE && !g_modal_closing) ? 1.0f : 0.0f,
+                                 16.0f);
+        if (g_modal_closing && g_modal_in < 0.02f) {
+            g_modal = MODAL_NONE;
+            g_modal_closing = false;
+            g_row_sel = 0;
+        }
+
         int n_games = build_games();
         int n_users = build_users();
         int n_hosts = build_hosts();
@@ -1087,8 +1146,15 @@ int main(int argc, char **argv)
                                  g_modal == MODAL_NONE);
 
         // --- la vista ---
+        //
+        // Al cambiar de seccion entra fundiendose y subiendo un poco. Va a una
+        // capa aparte porque asi la opacidad se aplica una vez al conjunto, en
+        // vez de tener que dar alfa a cada panel, icono y texto por separado.
         int tapped = -1;
         bool retap = false, hit_sync = false, hit_opts = false;
+
+        bool entrando = g_view_in < 0.995f;
+        if (entrando) ui_layer_begin();
 
         switch (g_nav) {
         case NAV_GAMES:
@@ -1114,11 +1180,18 @@ int main(int argc, char **argv)
         }
         }
 
+        if (entrando)
+            ui_layer_end(g_view_in, 0.99f + 0.01f * g_view_in,
+                         CONTENT_X + CONTENT_W / 2, BODY_Y + BODY_H / 2,
+                         0, (int)((1.0f - g_view_in) * 18.0f));
+
         scr_hints(hints_for());
         draw_toast();
 
-        if (g_modal == MODAL_GAME && g_games.n > 0) modal_game(&in, &c);
-        else if (g_modal == MODAL_PCCFG)            modal_pccfg(&in, &c);
+        if (g_modal_in > 0.005f) {
+            if (g_modal == MODAL_GAME && g_games.n > 0) modal_game(&in, &c);
+            else if (g_modal == MODAL_PCCFG)            modal_pccfg(&in, &c);
+        }
 
         ui_ripples_draw();
         ui_debug_draw();
@@ -1130,6 +1203,7 @@ int main(int argc, char **argv)
         if (nav_hit >= 0) {
             g_nav = (nav_t)nav_hit;
             g_row_sel = 0;
+            g_view_in = 0.0f;
             audio_play(SND_MOVE);
             continue;
         }
@@ -1150,7 +1224,7 @@ int main(int argc, char **argv)
         }
 
         if (hit_sync) { audio_play(SND_SELECT); run_sync(g_game_sel, 1); continue; }
-        if (hit_opts) { audio_play(SND_SELECT); g_modal = MODAL_GAME; g_row_sel = 0; continue; }
+        if (hit_opts) { audio_play(SND_SELECT); modal_open(MODAL_GAME); continue; }
 
         switch (g_nav) {
         case NAV_GAMES: input_games(&in);    break;
@@ -1167,6 +1241,7 @@ int main(int argc, char **argv)
                   ? (nav_t)((g_nav + 1) % NAV_COUNT)
                   : (nav_t)((g_nav + NAV_COUNT - 1) % NAV_COUNT);
             g_row_sel = 0;
+            g_view_in = 0.0f;
             audio_play(SND_MOVE);
         }
 
