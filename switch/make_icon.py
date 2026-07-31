@@ -85,6 +85,16 @@ def build():
 
 
 if __name__ == "__main__":
+    img = build()
+
     out = Path(__file__).with_name("nxsavesync.jpg")
-    build().save(out, "JPEG", quality=95)
-    print(f"icono escrito en {out}")
+    img.save(out, "JPEG", quality=95)
+    print(f"icono del homebrew: {out}")
+
+    # El mismo logo como .ico para la bandeja de Windows. Se guardan varios
+    # tamanos porque Windows elige uno u otro segun el DPI y la barra de tareas.
+    ico = Path(__file__).resolve().parent.parent / "pc" / "nxsavesync.ico"
+    ico.parent.mkdir(parents=True, exist_ok=True)
+    img.save(ico, "ICO", sizes=[(16, 16), (20, 20), (24, 24), (32, 32),
+                                (40, 40), (48, 48), (64, 64), (256, 256)])
+    print(f"icono de Windows:   {ico}")

@@ -16,7 +16,9 @@ Cada emulador guarda las partidas con una estructura distinta:
 
 from __future__ import annotations
 
+import os
 import struct
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,39 +46,74 @@ def _pretty_name(path: Path, known: set[str]) -> str:
     stem = path.name
     if stem.lower() in known:
         return stem
+
     # Rutas de flatpak tipo ~/.var/app/dev.eden_emu.eden/data/eden
     for part in reversed(path.parts):
         if part.lower() in known:
             return part
+
+    # Carpetas como "citron-portable" o "Ryujinx-1.1": nos quedamos con el
+    # nombre conocido que las encabeza, que es lo que espera ver el usuario.
+    low = stem.lower()
+    for name in known:
+        if low.startswith(name):
+            return name
+
     return stem
 
 
-def _search_roots(home: Path) -> list[Path]:
-    """Sitios donde los emuladores de Switch suelen dejar sus datos en Linux."""
-    roots = [
-        home / ".local/share",
-        home / ".config",
-        home / "Applications",
-        home / "Games",
-        home / "Emuladores",
-        home / "Emulators",
-    ]
+def _search_roots(home: Path, windows: bool | None = None) -> list[Path]:
+    """Sitios donde los emuladores de Switch suelen dejar sus datos."""
+    if windows is None:
+        windows = sys.platform == "win32"
 
-    # Flatpak: ~/.var/app/<id>/{data,config}
-    var_app = home / ".var/app"
-    if var_app.is_dir():
-        for app in var_app.iterdir():
-            roots.append(app / "data")
-            roots.append(app / "config")
+    roots: list[Path] = []
+
+    if windows:
+        # En Windows lo normal es %APPDATA%\<emulador>. Las instalaciones
+        # portables suelen acabar en Descargas, Documentos o el Escritorio.
+        appdata = os.environ.get("APPDATA")
+        local = os.environ.get("LOCALAPPDATA")
+        roots += [Path(appdata)] if appdata else [home / "AppData/Roaming"]
+        roots += [Path(local)] if local else [home / "AppData/Local"]
+        roots += [
+            home / "Documents", home / "Documentos",
+            home / "Downloads", home / "Descargas",
+            home / "Desktop", home / "Escritorio",
+            home / "Games", home / "Emulators", home / "Emuladores",
+        ]
+    else:
+        roots += [
+            home / ".local/share",
+            home / ".config",
+            home / "Applications",
+            home / "Games",
+            home / "Emuladores",
+            home / "Emulators",
+        ]
+
+        # Flatpak: ~/.var/app/<id>/{data,config}
+        var_app = home / ".var/app"
+        if var_app.is_dir():
+            for app in var_app.iterdir():
+                roots.append(app / "data")
+                roots.append(app / "config")
+
+    # Carpetas extra que indique el usuario, separadas por el separador del
+    # sistema. Util para emuladores en otra unidad (D:\Emus, /mnt/juegos...).
+    extra = os.environ.get("NXSAVESYNC_EMU_DIRS", "")
+    if extra:
+        roots += [Path(p) for p in extra.split(os.pathsep) if p]
 
     return [r for r in roots if r.is_dir()]
 
 
-def _scan(home: Path, marker: str, known: set[str]) -> list[tuple[str, Path]]:
+def _scan(home: Path, marker: str, known: set[str],
+          windows: bool | None = None) -> list[tuple[str, Path]]:
     found: list[tuple[str, Path]] = []
     seen: set[Path] = set()
 
-    for root in _search_roots(home):
+    for root in _search_roots(home, windows):
         try:
             children = sorted(root.iterdir())
         except OSError:
@@ -85,9 +122,10 @@ def _scan(home: Path, marker: str, known: set[str]) -> list[tuple[str, Path]]:
         for base in children:
             if not base.is_dir() or base in seen:
                 continue
-            # El propio directorio, o un nivel mas abajo (instalaciones
-            # portables tipo <carpeta>/Ryujinx/portable).
-            for candidate in (base, base / "portable"):
+            # El propio directorio, o un nivel mas abajo. Las instalaciones
+            # portables usan <carpeta>/portable en Ryujinx y <carpeta>/user en
+            # la familia de yuzu.
+            for candidate in (base, base / "portable", base / "user"):
                 if (candidate / marker).is_dir() and candidate not in seen:
                     seen.add(candidate)
                     found.append((_pretty_name(base, known), candidate))
@@ -95,12 +133,12 @@ def _scan(home: Path, marker: str, known: set[str]) -> list[tuple[str, Path]]:
     return found
 
 
-def _yuzu_bases(home: Path) -> list[tuple[str, Path]]:
-    return _scan(home, YUZU_MARKER, KNOWN_YUZU)
+def _yuzu_bases(home: Path, windows: bool | None = None) -> list[tuple[str, Path]]:
+    return _scan(home, YUZU_MARKER, KNOWN_YUZU, windows)
 
 
-def _ryujinx_bases(home: Path) -> list[tuple[str, Path]]:
-    return _scan(home, RYUJINX_MARKER, KNOWN_RYUJINX)
+def _ryujinx_bases(home: Path, windows: bool | None = None) -> list[tuple[str, Path]]:
+    return _scan(home, RYUJINX_MARKER, KNOWN_RYUJINX, windows)
 
 
 # --------------------------------------------------------------------------
@@ -346,10 +384,17 @@ def _title_variants(title_id: int) -> list[str]:
     return [f"{title_id:016x}", f"{title_id:016X}"]
 
 
-def detect(home: Path | None = None, profile: str | None = None) -> list[Emulator]:
-    """Busca emuladores instalados en las rutas habituales de Linux."""
+def detect(home: Path | None = None, profile: str | None = None,
+           windows: bool | None = None) -> list[Emulator]:
+    """Busca emuladores instalados en las rutas habituales del sistema.
+
+    `windows` fuerza el juego de rutas; sirve para las pruebas, que simulan una
+    instalacion de Windows sin necesidad de un Windows.
+    """
     home = home or Path.home()
 
-    emus = [Emulator(name, "yuzu", base, profile) for name, base in _yuzu_bases(home)]
-    emus += [Emulator(name, "ryujinx", base) for name, base in _ryujinx_bases(home)]
+    emus = [Emulator(name, "yuzu", base, profile)
+            for name, base in _yuzu_bases(home, windows)]
+    emus += [Emulator(name, "ryujinx", base)
+             for name, base in _ryujinx_bases(home, windows)]
     return emus

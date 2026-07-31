@@ -260,4 +260,53 @@ check("y no aparece entre los destinos",
       all(name != apagado for name, _ in rt.targets("UID0", TID)))
 rt.disabled.clear()
 
+print("\n11) Rutas de Windows (simuladas, sin necesitar un Windows)")
+# Se reproduce la estructura tipica: %APPDATA%\<emulador> para las instalaciones
+# normales y carpetas sueltas en Descargas para las portables.
+W = TMP / "windows"
+appdata = W / "AppData/Roaming"
+
+(appdata / "eden/nand/user/save/0000000000000000/AABB").mkdir(parents=True, exist_ok=True)
+(appdata / "Ryujinx/bis/user/save/4000000000000021/0").mkdir(parents=True, exist_ok=True)
+(appdata / "Ryujinx/bis/system/save/8000000000000000/0").mkdir(parents=True, exist_ok=True)
+(appdata / "Ryujinx/bis/system/save/8000000000000000/0/imkvdb.arc").write_bytes(db)
+
+# Portable de la familia yuzu: los datos cuelgan de <carpeta>\user
+(W / "Downloads/citron-portable/user/nand/user/save/0000000000000000/CCDD").mkdir(
+    parents=True, exist_ok=True)
+# Portable de Ryujinx: cuelgan de <carpeta>\portable
+(W / "Descargas/Ryujinx-1.1/portable/bis/user/save").mkdir(parents=True, exist_ok=True)
+
+emus = emulators.detect(W, windows=True)
+nombres = sorted(e.name for e in emus)
+check(f"detecta los cuatro ({', '.join(nombres)})", len(emus) >= 4)
+check("eden en AppData", any(e.name == "eden" and "Roaming" in str(e.base) for e in emus))
+check("Ryujinx en AppData", any(e.kind == "ryujinx" and "Roaming" in str(e.base) for e in emus))
+check("portable de yuzu bajo \\user",
+      any(e.kind == "yuzu" and e.base.name == "user" for e in emus))
+check("portable de Ryujinx bajo \\portable",
+      any(e.kind == "ryujinx" and e.base.name == "portable" for e in emus))
+
+# El title id se resuelve igual que en Linux
+ryu_win = next(e for e in emus if e.kind == "ryujinx" and "Roaming" in str(e.base))
+d = ryu_win.save_dir(0x0100000000010000)
+check(f"Ryujinx resuelve por imkvdb en Windows ({d.name if d else None})",
+      d is not None and d.name == "0")
+
+print("\n12) Las rutas de Linux no se cuelan en Windows y al reves")
+raices_win = [p.name for p in emulators._search_roots(W, windows=True)]
+check("en Windows no busca en .local/share", ".local" not in " ".join(raices_win))
+check("en Windows si busca en AppData",
+      any("Roaming" in str(p) or "Local" in str(p)
+          for p in emulators._search_roots(W, windows=True)))
+
+print("\n13) Carpetas extra por variable de entorno")
+extra = TMP / "otra-unidad/emus"
+(extra / "sudachi/nand/user/save/0000000000000000/EEFF").mkdir(parents=True, exist_ok=True)
+os.environ["NXSAVESYNC_EMU_DIRS"] = str(extra)
+emus = emulators.detect(W, windows=True)
+check("encuentra el emulador de la carpeta extra",
+      any(e.name == "sudachi" for e in emus))
+del os.environ["NXSAVESYNC_EMU_DIRS"]
+
 print("\nTODO OK")

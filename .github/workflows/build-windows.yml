@@ -1,0 +1,68 @@
+name: Ejecutable de Windows
+
+# Construye el .exe en un Windows de verdad. Asi se puede publicar una version
+# para Windows sin tener una maquina Windows a mano, y ademas queda la garantia
+# de que el codigo al menos arranca en el sistema al que va destinado.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  exe:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar PyInstaller
+        run: pip install pyinstaller
+
+      - name: Comprobar que el daemon arranca
+        shell: pwsh
+        run: |
+          # Si el daemon no levanta en Windows, mejor enterarse aqui que en la
+          # release. Se arranca unos segundos y se comprueba que escucha.
+          $p = Start-Process python -ArgumentList "pc\nxsavesyncd.py","--port","7878","--no-discovery" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 6
+          $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 7878 -WarningAction SilentlyContinue).TcpTestSucceeded
+          Stop-Process -Id $p.Id -Force
+          if (-not $ok) { throw "el daemon no acepto conexiones en el 7878" }
+          Write-Host "el daemon escucha correctamente"
+
+      - name: Detectar emuladores (no debe fallar sin ninguno instalado)
+        run: python pc\nxsavesyncd.py --list
+        continue-on-error: true
+
+      - name: Construir el ejecutable
+        run: >
+          pyinstaller --onefile --noconsole
+          --name NXSaveSync
+          --icon pc\nxsavesync.ico
+          --add-data "pc\nxsavesync.ico;."
+          --hidden-import emulators
+          --paths pc
+          pc\nxsavesync_tray.pyw
+
+      - name: Comprobar que el ejecutable existe
+        shell: pwsh
+        run: |
+          $exe = "dist\NXSaveSync.exe"
+          if (-not (Test-Path $exe)) { throw "no se genero el ejecutable" }
+          Write-Host "tamano: $((Get-Item $exe).Length) bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NXSaveSync-windows
+          path: dist/NXSaveSync.exe
+
+      - name: Adjuntarlo a la release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/NXSaveSync.exe

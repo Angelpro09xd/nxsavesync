@@ -67,8 +67,27 @@ CFG_BOOL, CFG_INT, CFG_CHOICE, CFG_INFO, CFG_ACTION = 0, 1, 2, 3, 4
 
 SUM_SYNCED, SUM_PC_CHANGED, SUM_UNKNOWN, SUM_NO_DIR = 0, 1, 2, 3
 
-STATE_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "nxsavesync"
-CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nxsavesync/config.json"
+def _data_dir() -> Path:
+    """Donde guardar estado y copias, segun lo que espera cada sistema."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData/Local")
+        return Path(base) / "NXSaveSync"
+    if sys.platform == "darwin":
+        return Path.home() / "Library/Application Support/nxsavesync"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "nxsavesync"
+
+
+def _config_path() -> Path:
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or (Path.home() / "AppData/Roaming")
+        return Path(base) / "NXSaveSync" / "config.json"
+    if sys.platform == "darwin":
+        return Path.home() / "Library/Application Support/nxsavesync/config.json"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nxsavesync/config.json"
+
+
+STATE_DIR = _data_dir()
+CONFIG_PATH = _config_path()
 BACKUP_KEEP = 10
 
 # Archivos que el emulador (o el escritorio) deja dentro de la carpeta del save
@@ -82,8 +101,23 @@ IGNORED_FILES = {
 }
 
 
+# Sumidero opcional del registro, para que una interfaz pueda mostrarlo.
+_log_sink = None
+
+
+def set_log_sink(fn) -> None:
+    global _log_sink
+    _log_sink = fn
+
+
 def log(msg: str) -> None:
-    print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
+    line = f"[{datetime.now():%H:%M:%S}] {msg}"
+    print(line, flush=True)
+    if _log_sink:
+        try:
+            _log_sink(line)
+        except Exception:
+            pass
 
 
 class ProtocolError(Exception):
@@ -560,7 +594,8 @@ class Discovery(threading.Thread):
     def run(self) -> None:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if sys.platform != "win32":
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("", DISCOVERY_PORT))
             s.settimeout(1.0)
         except OSError as e:
@@ -1009,6 +1044,10 @@ class Runtime:
         self.mirror = bool(cfg.get("mirror", True))
         self.watcher: Watcher | None = None
         self.disc: Discovery | None = None
+        # Callback opcional (tipo, mensaje) para interfaces como la bandeja de
+        # Windows. El daemon en consola simplemente no lo usa.
+        self.on_event = None
+        self.stats = {"conexiones": 0, "bajados": 0, "subidos": 0, "ultima": None}
         self.fallback = Path(args.fallback).expanduser().resolve()
         self.refresh_emulators()
 
@@ -1285,12 +1324,12 @@ def local_ips() -> list[str]:
     return ips
 
 
-def main() -> int:
+def main(argv=None, stop_event=None, rt_hook=None) -> int:
     ap = argparse.ArgumentParser(description="Servidor de sincronizacion de saves de Switch")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--dir", help="usa esta carpeta en vez de un emulador")
-    ap.add_argument("--fallback", default="~/sync/saves",
+    ap.add_argument("--fallback", default=str(_data_dir() / "saves"),
                     help="carpeta a usar si no se detecta ningun emulador")
     ap.add_argument("--profile", help="uuid del perfil de usuario del emulador a usar")
     ap.add_argument("--no-discovery", action="store_true",
@@ -1298,7 +1337,7 @@ def main() -> int:
     ap.add_argument("--no-watch", action="store_true",
                     help="no vigilar la carpeta del emulador")
     ap.add_argument("--list", action="store_true", help="muestra los emuladores detectados y sale")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     cfg = load_config()
 
@@ -1322,6 +1361,8 @@ def main() -> int:
         return 0
 
     rt = Runtime(args, cfg)
+    if rt_hook:
+        rt_hook(rt)      # deja que la interfaz se enganche antes de arrancar
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     global BACKUP_KEEP
@@ -1346,7 +1387,10 @@ def main() -> int:
     where = rt.describe()
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if sys.platform != "win32":
+        # En Windows SO_REUSEADDR permite que OTRO proceso se quede con un
+        # puerto ya en uso, justo lo contrario de lo que significa en Linux.
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((args.bind, args.port))
     srv.listen(1)
 
@@ -1356,11 +1400,20 @@ def main() -> int:
         log(f"  IP de este PC: {ip}  (la consola lo encuentra sola)")
 
     try:
-        while True:
+        # Con tiempo de espera para poder atender la orden de parar; sin el,
+        # accept() se quedaria bloqueado para siempre y la app no cerraria.
+        srv.settimeout(1.0)
+        while not (stop_event and stop_event.is_set()):
             # De uno en uno a proposito: dos Switch escribiendo el mismo save a
             # la vez es justo lo que no queremos.
-            sock, addr = srv.accept()
+            try:
+                sock, addr = srv.accept()
+            except socket.timeout:
+                continue
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            rt.stats["conexiones"] += 1
+            if rt.on_event:
+                rt.on_event("conectado", addr[0])
             log(f"--- conexion desde {addr[0]} ---")
             try:
                 Session(Conn(sock), rt).serve()
@@ -1370,6 +1423,8 @@ def main() -> int:
                 log(f"error de red: {e}")
             finally:
                 sock.close()
+                if rt.on_event:
+                    rt.on_event("desconectado", "")
                 log("--- conexion cerrada ---")
     except KeyboardInterrupt:
         log("Adios")
