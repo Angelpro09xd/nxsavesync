@@ -309,4 +309,65 @@ check("encuentra el emulador de la carpeta extra",
       any(e.name == "sudachi" for e in emus))
 del os.environ["NXSAVESYNC_EMU_DIRS"]
 
+print("\n14) Ryujinx: carpetas 0 (confirmada) y 1 (de trabajo)")
+# Reproduce lo que hace Ryujinx de verdad: reparte cada partida en dos
+# carpetas y el juego lee la de trabajo. Escribir solo en la confirmada
+# hace que la sincronizacion "llegue" pero el juego no la vea.
+ryu2 = TMP / "ryu2/.config/Ryujinx"
+(ryu2 / "bis/system/save/8000000000000000/0").mkdir(parents=True, exist_ok=True)
+(ryu2 / "bis/system/save/8000000000000000/0/imkvdb.arc").write_bytes(db)
+
+confirmada = ryu2 / "bis/user/save/4000000000000021/0"
+trabajo    = ryu2 / "bis/user/save/4000000000000021/1"
+confirmada.mkdir(parents=True, exist_ok=True)
+trabajo.mkdir(parents=True, exist_ok=True)
+(trabajo / "Player.sav").write_bytes(b"la partida vieja del emulador")
+
+emus = emulators.detect(TMP / "ryu2")
+r2 = next(e for e in emus if e.kind == "ryujinx")
+d = r2.save_dir(0x0100000000010000)
+check(f"resuelve a la confirmada ({d.name})", d == confirmada)
+
+hermanas = r2.shadow_dirs(d)
+check("detecta la carpeta de trabajo como hermana", hermanas == [trabajo])
+check("un emulador de yuzu no tiene hermanas", ed.shadow_dirs(base / real_uid) == [])
+
+# Sin carpeta de trabajo no se inventa ninguna: la crea el propio emulador.
+solo0 = ryu2 / "bis/user/save/4000000000000045/0"
+solo0.mkdir(parents=True, exist_ok=True)
+check("sin carpeta 1, no devuelve hermanas", r2.shadow_dirs(solo0) == [])
+
+print("\n15) El replicado deja las dos carpetas iguales")
+import nxsavesyncd as d_mod
+
+
+class ArgsRyu:
+    dir = None
+    fallback = str(TMP / "reserva2")
+    profile = None
+    port = 7878
+
+
+rt2 = d_mod.Runtime(ArgsRyu(), {})
+rt2.emus = emus
+
+# Llega la partida buena a la carpeta confirmada, como haria una sync.
+(confirmada / "Player.sav").write_bytes(b"la partida nueva de la consola")
+(confirmada / "Ugc").mkdir(exist_ok=True)
+(confirmada / "Ugc/dibujo.zs").write_bytes(b"contenido creado por el jugador")
+
+rt2.sync_shadows("UID0", 0x0100000000010000)
+
+check("la carpeta de trabajo recibe la partida nueva",
+      (trabajo / "Player.sav").read_bytes() == b"la partida nueva de la consola")
+check("y tambien las subcarpetas",
+      (trabajo / "Ugc/dibujo.zs").read_bytes() == b"contenido creado por el jugador")
+check("las dos quedan identicas",
+      d_mod.scan_dir(confirmada) == d_mod.scan_dir(trabajo))
+
+# Lo que sobre en la de trabajo tambien se limpia.
+(trabajo / "sobra.sav").write_bytes(b"resto de una partida anterior")
+rt2.sync_shadows("UID0", 0x0100000000010000)
+check("borra lo que sobra en la de trabajo", not (trabajo / "sobra.sav").exists())
+
 print("\nTODO OK")

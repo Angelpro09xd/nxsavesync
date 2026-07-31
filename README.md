@@ -3,7 +3,7 @@
 Sincroniza las partidas guardadas entre una Switch con CFW y un emulador del PC,
 por wifi, en los dos sentidos.
 
-**Desarrollador: Angelpro09_Dev** · versión 3.4.0
+**Desarrollador: Angelpro09_Dev** · versión 3.5.0
 
 - **`common/`** — el motor: protocolo, red, manifiestos, ajustes. Lo comparten
   la app y el sysmodule, así que los dos se comportan igual.
@@ -319,7 +319,12 @@ nuevo tocando tus saves.
 | Familia | Cómo encuentra los saves | Estado |
 |---------|--------------------------|--------|
 | yuzu y clones (**eden**, suyu, citron, sudachi, torzu…) | La ruta se deriva del title id | ✅ probado (Linux y Windows) |
-| **Ryujinx** y forks (Ryubing, Kenji-NX…) | La carpeta usa un id interno; hay que leer la base de datos `imkvdb.arc` | ✅ probado (Windows) |
+| **Ryujinx** y forks (Ryubing, Kenji-NX…) | La carpeta usa un id interno; hay que leer la base de datos `imkvdb.arc`, y la partida se reparte entre una carpeta confirmada (`0`) y una de trabajo (`1`) | ✅ probado (Windows) |
+
+> **Ryujinx guarda cada partida en dos carpetas.** `0` es la confirmada y `1` la
+> de trabajo, que es **la que lee el juego**. Escribir solo en `0` hace que la
+> sincronización llegue pero el juego siga viendo su partida vieja. Las dos se
+> dejan iguales tras cada sincronización.
 
 El daemon funciona en **Linux** (servicio de systemd) y en **Windows** (app de
 bandeja, `pc/nxsavesync_tray.pyw`).

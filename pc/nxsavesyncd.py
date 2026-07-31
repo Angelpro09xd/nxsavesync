@@ -938,13 +938,29 @@ class Session:
         else:
             log("  sincronizado")
 
-        self.rt.mirror_to_others(uid, title_id, root,
-                                 self.titles.get((uid, title_id), {}).get("name", ""))
+        ctx = self.titles.get((uid, title_id), {})
+        self.rt.mirror_to_others(uid, title_id, root, ctx.get("name", ""))
 
         if self.watcher is not None:
             with self.watcher.lock:
                 self.watcher.known[(uid, title_id)] = pc
                 self.watcher.pending.discard((uid, title_id))
+
+        rt = self.rt
+        rt.stats["ultima"] = datetime.now()
+
+        if rt.on_event:
+            plan = ctx.get("plan", [])
+            # Solo cuentan las acciones que mueven datos. Un juego que ya estaba
+            # al dia no deberia generar aviso en la bandeja.
+            movidos = sum(1 for a, _ in plan if a != ACT_CONFLICT)
+            rt.stats["archivos"] = rt.stats.get("archivos", 0) + movidos
+            rt.on_event("sync", {
+                "nombre": ctx.get("name", f"{title_id:016X}"),
+                "cambios": movidos,
+                "bajados": sum(1 for a, _ in plan if a == ACT_PULL),
+                "subidos": sum(1 for a, _ in plan if a == ACT_PUSH),
+            })
 
         self.conn.send(OP_COMMIT_OK)
 
@@ -1057,7 +1073,8 @@ class Runtime:
         # Callback opcional (tipo, mensaje) para interfaces como la bandeja de
         # Windows. El daemon en consola simplemente no lo usa.
         self.on_event = None
-        self.stats = {"conexiones": 0, "bajados": 0, "subidos": 0, "ultima": None}
+        self.stats = {"conexiones": 0, "archivos": 0, "ultima": None,
+                      "ultima_juegos": 0}
         self.fallback = Path(args.fallback).expanduser().resolve()
         self.refresh_emulators()
 
@@ -1149,40 +1166,67 @@ class Runtime:
         # Si ninguno tiene partida todavia, vale el primero.
         return best_path or targets[0][1]
 
+    def _replica(self, origen: Path, destino: Path) -> int:
+        """Deja `destino` con exactamente el contenido de `origen`."""
+        want = scan_dir(origen)
+        if scan_dir(destino) == want:
+            return 0
+
+        for rel in want:
+            dst = destino / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(origen / rel, dst)
+            invalidate_crc(dst)
+
+        # Quitamos lo que sobre, para que la copia sea fiel.
+        for path in sorted(destino.rglob("*"), reverse=True):
+            if path.is_file() and path.name not in IGNORED_FILES:
+                if path.relative_to(destino).as_posix() not in want:
+                    path.unlink(missing_ok=True)
+                    invalidate_crc(path)
+            elif path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+
+        return len(want)
+
+    def sync_shadows(self, uid: str, title_id: int) -> None:
+        """Iguala las carpetas hermanas que use cada emulador.
+
+        Ahora mismo solo Ryujinx las necesita: reparte cada partida entre una
+        carpeta confirmada y otra de trabajo, y es la de trabajo la que lee el
+        juego. Sin esto la sincronizacion llega pero el juego sigue viendo su
+        partida vieja, que es justo lo que parecia un fallo del emulador.
+        """
+        if self.args.dir:
+            return
+
+        for emu in self.active_emus():
+            real = self._emu_for(emu, uid)
+            d = real.save_dir(title_id)
+            if d is None or not d.is_dir():
+                continue
+            for hermana in real.shadow_dirs(d):
+                n = self._replica(d, hermana)
+                if n:
+                    log(f"  {emu.name}: replicado en {hermana.name}/ ({n} archivo(s))")
+
     def mirror_to_others(self, uid: str, title_id: int, source: Path, name: str) -> None:
         """Replica el resultado en el resto de emuladores.
 
         Sin esto tendrias la partida al dia en uno y vieja en los otros, que es
         justo el lio que aparece en cuanto tienes eden y citron a la vez.
         """
-        if not self.mirror:
-            return
+        if self.mirror:
+            for emu_name, dest in self.targets(uid, title_id):
+                if dest == source:
+                    continue
+                n = self._replica(source, dest)
+                if n:
+                    log(f"  replicado en {emu_name}: {n} archivo(s)")
 
-        want = scan_dir(source)
-
-        for emu_name, dest in self.targets(uid, title_id):
-            if dest == source:
-                continue
-            if scan_dir(dest) == want:
-                continue
-
-            for rel in want:
-                src_file = source / rel
-                dst_file = dest / rel
-                dst_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src_file, dst_file)
-                invalidate_crc(dst_file)
-
-            # Quitamos lo que sobre, para que la copia sea fiel.
-            for path in sorted(dest.rglob("*"), reverse=True):
-                if path.is_file() and path.name not in IGNORED_FILES:
-                    if path.relative_to(dest).as_posix() not in want:
-                        path.unlink(missing_ok=True)
-                        invalidate_crc(path)
-                elif path.is_dir() and not any(path.iterdir()):
-                    path.rmdir()
-
-            log(f"  replicado en {emu_name}: {len(want)} archivo(s)")
+        # Aunque el replicado entre emuladores este apagado, las carpetas
+        # hermanas de un mismo emulador tienen que quedar coherentes.
+        self.sync_shadows(uid, title_id)
 
     # -- ajustes que se editan desde la consola ----------------------------
 

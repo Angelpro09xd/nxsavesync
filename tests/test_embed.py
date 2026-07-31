@@ -83,6 +83,107 @@ def main():
     check("aviso de desconexion", any(t == "desconectado" for t, _ in eventos))
     check("contador de conexiones", capturado["rt"].stats["conexiones"] >= 1)
 
+    print("\n3b) El evento de sync trae lo que hace falta para el aviso")
+    TITLE = 0x0100000000010000
+    UID = struct.pack("<QQ", 0x1122, 0x3344)
+
+    def w_str(t):
+        b = t.encode(); return struct.pack("<H", len(b)) + b
+
+    class Cli:
+        def __init__(self):
+            self.s = socket.create_connection(("127.0.0.1", PORT), timeout=10)
+            self.send(0x01, struct.pack("<I", 3) + w_str("test") + w_str("dev"))
+            self.recv()
+
+        def send(self, op, p=b""):
+            self.s.sendall(bytes([op]) + struct.pack("<I", len(p)) + p)
+
+        def recv(self):
+            h = b""
+            while len(h) < 5:
+                h += self.s.recv(5 - len(h))
+            n = struct.unpack_from("<I", h, 1)[0]
+            b = b""
+            while len(b) < n:
+                b += self.s.recv(n - len(b))
+            return h[0], b
+
+        def sincroniza(self, archivos):
+            import zlib
+            man = struct.pack("<I", len(archivos))
+            for nombre, datos in archivos.items():
+                man += (w_str(nombre) + struct.pack("<Q", len(datos))
+                        + struct.pack("<I", zlib.crc32(datos)))
+            self.send(0x02, UID + w_str("Angel") + struct.pack("<Q", TITLE)
+                      + w_str("Juego De Prueba") + bytes([0, 0]) + man)
+            op, r = self.recv()
+            (ln,) = struct.unpack_from("<H", r, 1)
+            pos = 3 + ln
+            (n,) = struct.unpack_from("<I", r, pos)
+            pos += 4
+            plan = []
+            for _ in range(n):
+                a = r[pos]
+                (ln,) = struct.unpack_from("<H", r, pos + 1)
+                plan.append((a, r[pos + 3:pos + 3 + ln].decode()))
+                pos += 3 + ln
+
+            for a, ruta in plan:
+                if a == 1:      # PUSH
+                    d = archivos[ruta]
+                    self.s.sendall(bytes([0x04])
+                                   + struct.pack("<I", 16 + 8 + 2 + len(ruta) + 8 + len(d))
+                                   + UID + struct.pack("<Q", TITLE) + w_str(ruta)
+                                   + struct.pack("<Q", len(d)) + d)
+                    self.recv()
+
+            self.send(0x07, UID + struct.pack("<Q", TITLE) + man)
+            self.recv()
+            self.s.close()
+            return plan
+
+    eventos.clear()
+    cli = Cli()
+    cli.sincroniza({"a.sav": b"hola", "b.sav": b"mundo"})
+    time.sleep(0.4)
+
+    syncs = [d for t, d in eventos if t == "sync"]
+    check("hubo evento de sync", len(syncs) == 1)
+    check("es un diccionario con detalle", isinstance(syncs[0], dict))
+    check(f"cuenta 2 cambios ({syncs[0].get('cambios')})", syncs[0].get("cambios") == 2)
+    check("trae el nombre del juego", syncs[0].get("nombre") == "Juego De Prueba")
+    check("distingue subidos de bajados",
+          syncs[0].get("subidos") == 2 and syncs[0].get("bajados") == 0)
+
+    # Segunda pasada sin cambios: no debe generar aviso.
+    eventos.clear()
+    cli = Cli()
+    cli.sincroniza({"a.sav": b"hola", "b.sav": b"mundo"})
+    time.sleep(0.4)
+    syncs = [d for t, d in eventos if t == "sync"]
+    check("un juego ya al dia reporta 0 cambios",
+          len(syncs) == 1 and syncs[0].get("cambios") == 0)
+
+    print("\n3c) El texto del aviso")
+    from importlib.machinery import SourceFileLoader
+    import importlib.util
+    loader = SourceFileLoader("tray", str(PC_DIR / "nxsavesync_tray.pyw"))
+    spec = importlib.util.spec_from_loader("tray", loader)
+    tray = importlib.util.module_from_spec(spec)
+    loader.exec_module(tray)
+
+    t, x = tray.resume_tanda(["Zelda BotW"], 3)
+    check(f"singular con un juego ({t})", t.startswith("1 partida sincronizada"))
+    t, x = tray.resume_tanda(["Zelda", "Minecraft", "Tomodachi"], 12)
+    check(f"plural y total de archivos ({t})",
+          t.startswith("3 partidas") and "12 archivos" in t)
+    check("lista los nombres", x == "Zelda, Minecraft, Tomodachi")
+
+    largos = [f"Juego con un nombre muy largo numero {i}" for i in range(20)]
+    t, x = tray.resume_tanda(largos, 99)
+    check(f"recorta y resume el resto ({len(x)} car.)", len(x) < 255 and "mas" in x)
+
     print("\n4) Parada limpia")
     # Sin el tiempo de espera en accept(), esto se quedaria colgado para siempre
     # y la aplicacion no se podria cerrar.

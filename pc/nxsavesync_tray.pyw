@@ -18,7 +18,6 @@ import subprocess
 import sys
 import threading
 import traceback
-from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 
@@ -42,6 +41,7 @@ WM_TRAY = WM_APP + 1          # mensaje propio para los avisos del icono
 WM_LBUTTONUP = 0x0202
 WM_RBUTTONUP = 0x0205
 WM_LBUTTONDBLCLK = 0x0203
+NIN_BALLOONUSERCLICK = 0x0405   # se pincho el globo
 
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x01, 0x02, 0x04, 0x10
@@ -61,6 +61,8 @@ IDI_APPLICATION = 32512
 IS_WIN = sys.platform == "win32"
 
 if IS_WIN:
+    from ctypes import wintypes
+
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     shell32 = ctypes.WinDLL("shell32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -196,6 +198,33 @@ ID_MIRROR = 1006
 ID_EMU_BASE = 1100          # 1100 + n para cada emulador
 
 
+def resume_tanda(nombres: list[str], archivos: int = 0,
+                 limite: int = 200) -> tuple[str, str]:
+    """Titulo y texto del aviso a partir de los juegos sincronizados.
+
+    Aparte de la clase y sin tocar Win32 para poder probarlo en cualquier
+    sistema: el globo de Windows corta a 255 caracteres y conviene asegurarse
+    de que el recorte cae bien.
+    """
+    n = len(nombres)
+    titulo = "1 partida sincronizada" if n == 1 else f"{n} partidas sincronizadas"
+    if archivos:
+        titulo += f"  ({archivos} archivo" + ("" if archivos == 1 else "s") + ")"
+
+    texto, mostrados = "", 0
+    for nombre in nombres:
+        trozo = (", " if texto else "") + nombre
+        if len(texto) + len(trozo) > limite:
+            break
+        texto += trozo
+        mostrados += 1
+
+    if mostrados < n:
+        texto += f"  y {n - mostrados} mas"
+
+    return titulo, texto
+
+
 class Tray:
     def __init__(self):
         self.hwnd = None
@@ -205,6 +234,11 @@ class Tray:
         self.lineas: list[str] = []
         self.estado = "arrancando"
         self.log_path = daemon.STATE_DIR / "nxsavesync.log"
+
+        # Lo sincronizado en la conexion actual. Se avisa al final y de una vez:
+        # un globo por juego serian once seguidos y no se lee ninguno.
+        self.tanda: list[str] = []
+        self.tanda_archivos = 0
 
     # -- registro -----------------------------------------------------------
 
@@ -221,15 +255,40 @@ class Tray:
 
     # -- eventos del daemon -------------------------------------------------
 
-    def evento(self, tipo: str, dato: str) -> None:
+    def evento(self, tipo: str, dato) -> None:
         if tipo == "conectado":
             self.estado = f"sincronizando con {dato}"
+            self.tanda = []
+            self.tanda_archivos = 0
             self.actualiza_tip()
+
+        elif tipo == "sync":
+            # Solo se apunta lo que movio algo; un juego ya al dia no es noticia.
+            if isinstance(dato, dict):
+                if dato.get("cambios", 0) > 0:
+                    self.tanda.append(dato.get("nombre") or "?")
+                    self.tanda_archivos += dato["cambios"]
+            elif dato:
+                self.tanda.append(str(dato))
+
         elif tipo == "desconectado":
             self.estado = "esperando"
+            self.avisa_tanda()
             self.actualiza_tip()
-        elif tipo == "sync":
-            self.globo("Partida sincronizada", dato or "Listo", NIIF_INFO)
+
+    def avisa_tanda(self) -> None:
+        """Un aviso con los juegos sincronizados en esta conexion."""
+        if not self.tanda:
+            return
+
+        titulo, texto = resume_tanda(self.tanda, self.tanda_archivos)
+
+        if self.rt:
+            self.rt.stats["ultima_juegos"] = len(self.tanda)
+
+        self.globo(titulo, texto, NIIF_INFO)
+        self.tanda = []
+        self.tanda_archivos = 0
 
     # -- icono de la bandeja -------------------------------------------------
 
@@ -326,7 +385,11 @@ class Tray:
         ultima = self.rt.stats.get("ultima") if self.rt else None
         cabecera = f"{APP_NAME} — {self.estado}"
         if ultima:
-            cabecera += f"   (ultima: {ultima:%H:%M})"
+            cabecera += f"   (ultima: {ultima:%H:%M}"
+            juegos = self.rt.stats.get("ultima_juegos", 0)
+            if juegos:
+                cabecera += f", {juegos} juego" + ("" if juegos == 1 else "s")
+            cabecera += ")"
         user32.AppendMenuW(hmenu, MF_STRING | MF_GRAYED, ID_ESTADO, cabecera)
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
 
@@ -417,7 +480,7 @@ class Tray:
             evento = lparam & 0xFFFF
             if evento == WM_RBUTTONUP:
                 self.menu()
-            elif evento in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
+            elif evento in (WM_LBUTTONUP, WM_LBUTTONDBLCLK, NIN_BALLOONUSERCLICK):
                 self.abre(self.log_path)
             return 0
 

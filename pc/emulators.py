@@ -351,6 +351,29 @@ class Emulator:
         except (OSError, ValueError):
             return []
 
+    def shadow_dirs(self, save_dir: Path) -> list[Path]:
+        """Carpetas hermanas que deben acabar con el mismo contenido.
+
+        Ryujinx guarda cada partida con el esquema de LibHac, que reparte los
+        datos en dos carpetas:
+
+            <save_data_id>/0/   confirmada  (lo que queda al cerrar el juego)
+            <save_data_id>/1/   de trabajo  (lo que el juego lee y escribe)
+
+        Escribir solo en la confirmada no basta: mientras exista la de trabajo,
+        el juego sigue viendo su contenido viejo y parece que la sincronizacion
+        no ha hecho nada. Hay que dejar las dos iguales.
+        """
+        if self.kind != "ryujinx":
+            return []
+
+        pareja = {"0": "1", "1": "0"}.get(save_dir.name)
+        if not pareja:
+            return []
+
+        hermana = save_dir.parent / pareja
+        return [hermana] if hermana.is_dir() else []
+
     def profiles(self) -> list[Path]:
         """Carpetas de perfil presentes en disco."""
         root = self.base / "nand/user/save/0000000000000000"
