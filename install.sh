@@ -31,12 +31,17 @@ else
     say "Compilando el sysmodule..."
     make -C "$REPO/sysmodule"
     say "Listo: $REPO/sysmodule/nxsavesync-sys.nsp"
+
+    say "Compilando el overlay..."
+    make -C "$REPO/overlay"
+    say "Listo: $REPO/overlay/nxsavesync.ovl  (necesita ovlloader)"
 fi
 
 # --- SD de la Switch --------------------------------------------------------
 
 NRO="$REPO/switch/nxsavesync.nro"
 NSP="$REPO/sysmodule/nxsavesync-sys.nsp"
+OVL="$REPO/overlay/nxsavesync.ovl"
 SYS_TID="420000000000534E"
 
 if [ -f "$NRO" ]; then

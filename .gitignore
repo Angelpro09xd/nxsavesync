@@ -7,6 +7,7 @@ build/
 *.nso
 *.npdm
 *.nsp
+*.ovl
 
 # Python
 __pycache__/
@@ -14,3 +15,6 @@ __pycache__/
 
 # Partidas guardadas: son datos personales, nunca van al repositorio
 saves/
+
+# libtesla se descarga aparte (ver overlay/README)
+overlay/libs/

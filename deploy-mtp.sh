@@ -9,6 +9,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYS_TID="420000000000534E"
 NRO="$REPO/switch/nxsavesync.nro"
 NSP="$REPO/sysmodule/nxsavesync-sys.nsp"
+OVL="$REPO/overlay/nxsavesync.ovl"
 
 say()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m!!\033[0m %s\n' "$*"; }
@@ -51,6 +52,16 @@ cp "$NRO" "$ROOT/switch/nxsavesync.nro"
 
 say "Copiando el sysmodule..."
 cp "$NSP" "$DEST/exefs.nsp"
+
+# El overlay solo sirve con ovlloader (Tesla o Ultrahand) instalado. Se copia
+# igualmente: si no lo tienes, el archivo se queda ahi sin hacer nada.
+if [ -f "$OVL" ]; then
+    mkdir -p "$ROOT/switch/.overlays"
+    cp "$OVL" "$ROOT/switch/.overlays/nxsavesync.ovl"
+    if [ -d "$ROOT/switch/.overlays" ] && ls "$ROOT/switch/.overlays"/*.ovl >/dev/null 2>&1; then
+        say "Overlay copiado en switch/.overlays"
+    fi
+fi
 [ -f "$REPO/sysmodule/toolbox.json" ] && cp "$REPO/sysmodule/toolbox.json" "$DEST/toolbox.json"
 
 if [ ! -f "$DEST/flags/boot2.flag" ]; then

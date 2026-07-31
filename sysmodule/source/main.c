@@ -42,6 +42,7 @@
 #define LOG_PATH   CFG_DIR "/fondo.log"
 #define LOG_OLD    CFG_DIR "/fondo.log.1"
 #define OFF_SWITCH CFG_DIR "/fondo-apagado"
+#define ASK_NOW    CFG_DIR "/sync-ahora"   // lo deja el overlay
 #define LOG_MAX    (96 * 1024)
 
 #ifdef __cplusplus
@@ -190,6 +191,17 @@ static bool switch_off(void)
 {
     struct stat st;
     return stat(OFF_SWITCH, &st) == 0;
+}
+
+// El overlay pide una sincronizacion dejando un archivo. Se consume al leerlo
+// para que no se repita, pero solo si de verdad se va a sincronizar: si hay un
+// juego abierto se deja pedido y se atiende al salir.
+static bool asked_now(bool consumir)
+{
+    struct stat st;
+    if (stat(ASK_NOW, &st) != 0) return false;
+    if (consumir) remove(ASK_NOW);
+    return true;
 }
 
 // --------------------------------------------------------------------------
@@ -440,6 +452,7 @@ int main(int argc, char **argv)
         // Se vacia siempre la cola, aunque no vayamos a usarlo: si no, se
         // acumularian avisos viejos y el primer repaso sobraria.
         bool nudged = nudge_pending() && g_set.bg_nudge;
+        bool pedido = asked_now(false);
 
         if (!g_set.bg_enabled || switch_off()) { was_running = game_running(); continue; }
 
@@ -457,7 +470,7 @@ int main(int argc, char **argv)
 
         was_running = false;
 
-        if (!just_closed && !periodic && !nudged) continue;
+        if (!just_closed && !periodic && !nudged && !pedido) continue;
         if (!network_up()) continue;
 
         // Un respiro tras cerrar el juego: el sistema aun esta terminando de
@@ -465,9 +478,12 @@ int main(int argc, char **argv)
         if (just_closed) svcSleepThread(3000000000ULL);
         if (game_running()) { was_running = true; continue; }
 
-        sync_pass(just_closed ? "al cerrar el juego"
-                : nudged     ? "aviso del PC"
-                             : "repaso periodico");
+        if (pedido) asked_now(true);   // ya se va a hacer: se consume la peticion
+
+        sync_pass(pedido     ? "pedido desde el overlay"
+                : just_closed ? "al cerrar el juego"
+                : nudged      ? "aviso del PC"
+                              : "repaso periodico");
         last_pass = armGetSystemTick();
     }
 

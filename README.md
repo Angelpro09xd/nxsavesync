@@ -10,6 +10,8 @@ por wifi, en los dos sentidos.
 - **`switch/`** — homebrew (`.nro`) con libnx, SDL2 y SDL2_mixer. Interfaz
   gráfica y sonido.
 - **`sysmodule/`** — proceso de Atmosphère que sincroniza **sin abrir la app**.
+- **`overlay/`** — overlay de Tesla/Ultrahand para ver el estado y actuar sin
+  salir del juego. **Requiere ovlloader instalado.**
 - **`pc/`** — daemon en Python. Escribe directamente en la carpeta de saves de
   los emuladores, sin copias intermedias que puedan quedar desfasadas.
 - **`tests/`** — pruebas del protocolo y de la detección de emuladores.
@@ -181,6 +183,19 @@ así que el sysmodule usa su propia política, **por defecto *no tocar nada***. 
 juegos que necesiten una decisión se quedan pendientes y te los pregunta la app la
 próxima vez que la abras. Puedes cambiarla a *gana la Switch* o *gana el PC* si
 prefieres que resuelva solo.
+
+### El overlay
+
+Si tienes **ovlloader** (Ultrahand o Tesla), `overlay/` añade un panel que se
+abre con el combo de siempre y muestra el estado sin salir del juego: última
+sincronización, archivos movidos, cuántos esperan decisión, el interruptor del
+segundo plano y un *"Sincronizar ahora"*.
+
+Con un juego abierto ese botón pone *"al salir del juego"*, y es a propósito: la
+regla de no tocar un savedata mientras se juega no se salta por nada.
+
+> **Sin ovlloader el `.ovl` no hace nada.** No es un homebrew que se pueda abrir
+> por su cuenta. El resto de NX Save Sync funciona igual sin él.
 
 ### Cómo avisa
 
