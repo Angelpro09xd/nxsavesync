@@ -18,3 +18,11 @@ saves/
 
 # libtesla se descarga aparte (ver overlay/README)
 overlay/libs/
+
+# Previsualizador de la interfaz: binarios y salidas
+tools/preview/preview
+tools/preview/musica
+tools/preview/*.o
+tools/preview/salida*/
+tools/preview/acentos/
+tools/preview/*.wav

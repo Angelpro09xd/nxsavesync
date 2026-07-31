@@ -36,6 +36,7 @@ typedef struct {
     u8 sync_on_open;    // sincronizar todo nada mas abrir la app
     u8 auto_discover;   // buscar hosts por broadcast al arrancar
     u8 sounds;          // efectos de sonido de la interfaz
+    u8 music;           // musica ambiental de fondo
     u8 ask_incoming;    // preguntar cuando el PC trae cambios
 
     // Sysmodule. Apagado por defecto a proposito: es un proceso que corre

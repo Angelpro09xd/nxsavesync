@@ -3,7 +3,7 @@
 Sincroniza las partidas guardadas entre una Switch con CFW y un emulador del PC,
 por wifi, en los dos sentidos.
 
-**Desarrollador: Angelpro09_Dev** · versión 4.0.1
+**Desarrollador: Angelpro09_Dev** · versión 4.1
 
 - **`common/`** — el motor: protocolo, red, manifiestos, ajustes. Lo comparten
   la app y el sysmodule, así que los dos se comportan igual.
@@ -52,16 +52,38 @@ no hace falta empaquetar la imagen dentro del binario.
 
 ## La interfaz
 
-Barra lateral fija con las cuatro secciones (Juegos, Perfiles, PCs, Ajustes), y
-para cada juego un panel de detalle con su icono grande, estado y acciones.
+Cristal líquido, y no como metáfora: **los paneles enseñan de verdad lo que tienen
+detrás, desenfocado**.
 
-El detalle que más cambia cómo se siente: **el color de acento sale del icono del
-juego seleccionado**. Se calcula el color medio del icono, se sube la saturación y
-se fija el brillo para que siempre contraste con el fondo oscuro. La app entera se
-tiñe al moverte por la rejilla, con una transición suave.
+Cada fotograma se dibuja en dos capas. Primero el fondo: el icono del juego elegido
+ampliado hasta perder la forma, girando muy despacio, sobre tres luces de color que
+se mueven en órbitas distintas. Ese fondo se reduce a una cadena de miniaturas
+—1280, 640, 320, 160, 80— promediando de dos en dos, y de ahí sale el desenfoque.
+Luego cada panel copia el trozo que le toca, lo tiñe, le dobla la luz en el canto y
+se recorta con una máscara de alfa suavizada.
 
-Todo lo que se mueve está animado por interpolación exponencial con el tiempo real
-entre fotogramas, así que se ve igual acoplada a la tele que en portátil.
+Por eso el cristal reacciona: no es un color pintado que lo imita, es el fondo real.
+Mueve la selección y el interior de cada tarjeta cambia con él.
+
+Los ingredientes, uno a uno:
+
+| Pieza | Qué aporta |
+|-------|-----------|
+| **Desenfoque del fondo** | Lo que hace que sea cristal y no plástico |
+| **Refracción del canto** | Arrastra hacia dentro lo que hay fuera: da grosor |
+| **Grano de esmerilado** | Sin él parece un degradado pintado |
+| **Brillo especular** | Solo arriba y a la izquierda, apagándose en los extremos |
+| **Sombra proyectada** | Separa el panel del fondo |
+| **Máscara de alfa** | Recorte redondo de verdad, también encima de otro panel |
+
+El acento sigue saliendo del **color medio del icono del juego elegido**, con la
+saturación con tope y el brillo fijo para que siempre contraste. Fondo, halos,
+botón principal, anillo de selección e insignias se tiñen con él a la vez.
+
+El menú es un **dock flotante** con una gota que persigue la sección elegida con un
+muelle y se estira según lo rápido que vaya. El muelle se integra a pasos fijos de
+1/120 s: de un salto por fotograma era estable a 60 fps pero se disparaba en
+cualquier bache.
 
 | Botón | Acción |
 |-------|--------|
@@ -72,8 +94,31 @@ entre fotogramas, así que se ve igual acoplada a la tele que en portátil.
 | **ZL / ZR** | Cambia de perfil de la consola |
 | **+** | Salir |
 
-Toca una tarjeta para seleccionarla y tócala otra vez para sincronizar. La barra
-lateral también responde al tacto.
+Toca una tarjeta para seleccionarla y tócala otra vez para sincronizar. El dock, los
+botones y las filas también responden al tacto, y cada toque deja una onda.
+
+## Ver la interfaz sin la consola
+
+El dibujo vive en `switch/source/screens.c` y no sabe nada de red ni de savedata:
+entra el estado ya masticado y sale una pantalla. Eso permite compilar los mismos
+`ui.c` y `screens.c` en el PC y **mirar el resultado**:
+
+```bash
+cd tools/preview
+make
+./preview salida/            # un PNG por pantalla
+./preview salida/ --debug    # ademas dibuja el contorno de cada caja
+./preview --live             # ventana navegable con teclado y raton
+```
+
+Con `--debug` cada caja registrada sale contorneada, **en rojo si se cruza con otra**.
+La versión anterior acumuló seis solapamientos que hubo que cazar de uno en uno a
+base de fotos de la consola; ahora salen todos de golpe y antes de compilar nada.
+
+El propio previsualizador cazó dos fallos que en la consola habrían tardado en
+aparecer: la caché de tamaños de letra se quedaba en diez y a partir de ahí los
+títulos salían con el cuerpo del texto, y la de esquinas redondeadas se llenaba a
+las veinte y devolvía la curva de otro radio.
 
 ## Sonido
 
@@ -83,6 +128,30 @@ ondas seno y cuadrada con envolvente de ataque y caída, mezcladas a mano. Así 
 
 Hay sonidos distintos para moverse, aceptar, volver, cambiar un ajuste, error,
 aviso, empezar y terminar. Se apagan en Ajustes → Sonidos.
+
+### La música de fondo
+
+También sintetizada, y a juego con el cristal: un acorde de cuatro voces rotando por
+**Am – F – C – G**, cada nota con dos osciladores desafinados un pelín entre sí para
+que flote, y encima repiques con parciales de campana —relaciones 1, 2, 2.76 y 5.4,
+que es lo que distingue un cristal de una flauta—. Debajo, una capa de aire casi
+inaudible.
+
+El bucle dura 32 segundos y **se cose consigo mismo**: la cola se pliega sobre el
+principio con un cruce, así que al repetir no hay golpe.
+
+Se genera en un hilo aparte y empieza a sonar cuando está lista, para no retrasar el
+arranque. Se apaga en Ajustes → Música de fondo.
+
+Para escucharla en el PC antes de copiar nada a la SD:
+
+```bash
+cd tools/preview && make musica
+./musica ambiente.wav
+```
+
+Usa el mismo generador que la consola, así que lo que suene ahí es exactamente lo
+que sonará allí.
 
 ## Estado de cada juego
 

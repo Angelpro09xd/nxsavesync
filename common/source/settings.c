@@ -15,6 +15,7 @@ static void defaults(void)
     g_set.sync_on_open  = 0;
     g_set.auto_discover = 1;
     g_set.sounds        = 1;
+    g_set.music         = 1;
     g_set.ask_incoming  = 1;
     g_set.bg_enabled    = 0;
     g_set.bg_policy     = POLICY_SKIP;
@@ -47,6 +48,7 @@ void settings_save(void)
         fprintf(f, "sincronizar_al_abrir=%u\n", g_set.sync_on_open);
         fprintf(f, "buscar_pcs=%u\n", g_set.auto_discover);
         fprintf(f, "sonidos=%u\n", g_set.sounds);
+        fprintf(f, "musica=%u\n", g_set.music);
         fprintf(f, "preguntar_si_cambia_pc=%u\n", g_set.ask_incoming);
         fprintf(f, "\n# Sysmodule (sincronizacion en segundo plano)\n");
         fprintf(f, "fondo=%u\n", g_set.bg_enabled);
@@ -130,6 +132,7 @@ void settings_load(void)
         else if (!strcmp(key, "sincronizar_al_abrir")) g_set.sync_on_open = (u8)atoi(val);
         else if (!strcmp(key, "buscar_pcs"))           g_set.auto_discover = (u8)atoi(val);
         else if (!strcmp(key, "sonidos"))              g_set.sounds = (u8)atoi(val);
+        else if (!strcmp(key, "musica"))               g_set.music = (u8)atoi(val);
         else if (!strcmp(key, "preguntar_si_cambia_pc")) g_set.ask_incoming = (u8)atoi(val);
         else if (!strcmp(key, "fondo"))                g_set.bg_enabled = (u8)atoi(val);
         else if (!strcmp(key, "fondo_politica"))       g_set.bg_policy = (u8)atoi(val);

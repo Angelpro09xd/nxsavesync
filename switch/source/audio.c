@@ -12,6 +12,11 @@
 #define CHANNELS 2
 
 static Mix_Chunk *g_snd[SND_COUNT];
+
+// Definidos en la seccion de musica, al final.
+static int16_t   *g_music_buf;
+static Mix_Chunk *g_music;
+static SDL_Thread *g_music_thread;
 static bool       g_ready;
 static bool       g_on = true;
 
@@ -129,7 +134,10 @@ bool audio_init(void)
     if (Mix_OpenAudio(RATE, AUDIO_S16SYS, CHANNELS, 1024) != 0)
         return false;
 
-    Mix_AllocateChannels(8);
+    Mix_AllocateChannels(12);
+    // El canal 0 queda reservado para la musica: asi Mix_PlayChannel(-1) de un
+    // efecto nunca se lo puede quitar de debajo.
+    Mix_ReserveChannels(1);
 
     // Moverse: clic corto y bajo, se repite mucho y no debe cansar.
     g_snd[SND_MOVE] = make_sequence((tone_t[]){
@@ -196,6 +204,11 @@ void audio_exit(void)
         }
     }
 
+    if (g_music_thread) { SDL_WaitThread(g_music_thread, NULL); g_music_thread = NULL; }
+    if (g_music) { Mix_FreeChunk(g_music); g_music = NULL; }
+    free(g_music_buf);
+    g_music_buf = NULL;
+
     Mix_CloseAudio();
     g_ready = false;
 }
@@ -210,3 +223,255 @@ void audio_play(sound_t s)
 
 void audio_set_enabled(bool on) { g_on = on; }
 bool audio_enabled(void)        { return g_on; }
+
+// --------------------------------------------------------------------------
+// musica de fondo
+// --------------------------------------------------------------------------
+//
+// Ambiente generativo, a juego con el cristal: un acorde de cuatro voces que
+// va rotando por Am - F - C - G, cada nota con dos osciladores desafinados un
+// pelin entre si para que "flote", y encima repiques de cristal con parciales
+// de campana. Debajo, una capa de aire casi inaudible que rellena el silencio.
+//
+// El bucle dura 32 segundos exactos y se cose consigo mismo al final, asi que
+// no hay costura audible al repetir.
+
+#define MUS_SECONDS  32
+#define MUS_FADE_S   2                       // cola que se pliega sobre el inicio
+#define MUS_FRAMES   (MUS_SECONDS * RATE)
+#define MUS_FADE     (MUS_FADE_S * RATE)
+
+#define SINE_BITS 12
+#define SINE_SIZE (1 << SINE_BITS)
+
+static float g_sine[SINE_SIZE];
+
+// Tabla en vez de llamar a sin() por muestra: son millon y medio de fotogramas
+// por dos docenas de osciladores, y en la consola eso se nota.
+static void sine_table_init(void)
+{
+    for (int i = 0; i < SINE_SIZE; i++)
+        g_sine[i] = (float)sin(2.0 * M_PI * i / SINE_SIZE);
+}
+
+static inline float osc(double *phase, double inc)
+{
+    *phase += inc;
+    if (*phase >= 1.0) *phase -= 1.0;
+
+    double f = *phase * SINE_SIZE;
+    int    i = (int)f;
+    float  k = (float)(f - i);
+    return g_sine[i & (SINE_SIZE - 1)] * (1.0f - k)
+         + g_sine[(i + 1) & (SINE_SIZE - 1)] * k;
+}
+
+// Am - F - C - G. Cuatro voces por acorde, con el bajo abajo y las notas de
+// color arriba; el movimiento entre acordes es corto a proposito.
+static const float MUS_CHORDS[4][4] = {
+    { 110.00f, 164.81f, 220.00f, 329.63f },   // Am
+    {  87.31f, 174.61f, 261.63f, 349.23f },   // F
+    { 130.81f, 196.00f, 261.63f, 392.00f },   // C
+    {  98.00f, 146.83f, 246.94f, 392.00f },   // G
+};
+
+// Distancia en el tiempo teniendo en cuenta que el bucle da la vuelta.
+static float wrap_dist(float t, float center)
+{
+    float d = fabsf(t - center);
+    return d > MUS_SECONDS / 2.0f ? MUS_SECONDS - d : d;
+}
+
+// Envolvente de cada acorde: una campana suave centrada en su turno. Se solapan
+// entre si, asi que un acorde entra mientras el anterior aun se apaga y nunca
+// hay un corte.
+static float chord_env(float t, int k)
+{
+    const float half = 7.0f;
+    float d = wrap_dist(t, k * (MUS_SECONDS / 4.0f) + MUS_SECONDS / 8.0f);
+    if (d >= half) return 0.0f;
+    float x = cosf(d / half * (float)M_PI / 2.0f);
+    return x * x;
+}
+
+// Repiques de cristal: cuando, a que altura y hacia que lado.
+static const struct { float at, freq, pan; } MUS_PINGS[] = {
+    {  2.4f,  659.25f, -0.55f },   // E5
+    {  6.9f,  987.77f,  0.45f },   // B5
+    { 11.2f,  880.00f, -0.30f },   // A5
+    { 15.6f, 1318.51f,  0.60f },   // E6
+    { 19.9f,  783.99f, -0.50f },   // G5
+    { 24.3f, 1046.50f,  0.35f },   // C6
+    { 28.7f,  659.25f, -0.20f },
+};
+#define MUS_PING_N ((int)(sizeof(MUS_PINGS) / sizeof(MUS_PINGS[0])))
+
+// Parciales de campana. Las relaciones no son enteras a proposito: eso es lo
+// que distingue un cristal de una flauta.
+static const struct { float ratio, amp, decay; } BELL[] = {
+    { 1.00f, 1.00f, 1.6f },
+    { 2.00f, 0.42f, 1.1f },
+    { 2.76f, 0.28f, 0.8f },
+    { 5.40f, 0.12f, 0.5f },
+};
+#define BELL_N ((int)(sizeof(BELL) / sizeof(BELL[0])))
+
+static volatile bool g_music_ready;
+static bool g_music_on = true;
+static bool g_music_playing;
+
+#define MUS_CHANNEL 0
+
+void audio_music_render(int16_t *out)
+{
+    const int total = MUS_FRAMES + MUS_FADE;
+
+    // El previsualizador llama aqui directamente, sin pasar por el hilo.
+    if (g_sine[1] == 0.0f) sine_table_init();
+
+    // Estado de los osciladores del pad: 4 acordes x 4 voces x 3 osciladores
+    // (dos desafinados y una octava por debajo, muy floja).
+    static double ph[4][4][3];
+    memset(ph, 0, sizeof(ph));
+
+    double air_lp = 0.0;
+    uint32_t rnd = 0x1234567u;
+
+    for (int i = 0; i < total; i++) {
+        float t = (float)(i % MUS_FRAMES) / RATE;
+        float l = 0.0f, r = 0.0f;
+
+        // --- el acorde ---
+        for (int k = 0; k < 4; k++) {
+            float env = chord_env(t, k);
+            if (env < 0.002f) continue;          // acorde callado: ni se calcula
+
+            for (int v = 0; v < 4; v++) {
+                float f = MUS_CHORDS[k][v];
+
+                // Cada voz respira a su ritmo, para que el acorde no suene fijo.
+                float breathe = 0.82f + 0.18f * sinf(t * (0.13f + v * 0.037f) * 6.2831f
+                                                     + k * 1.7f + v);
+                float a = env * breathe * (v == 0 ? 0.34f : 0.22f);
+
+                float s = osc(&ph[k][v][0], f            / RATE)
+                        + osc(&ph[k][v][1], f * 1.0016f  / RATE) * 0.9f
+                        + osc(&ph[k][v][2], f * 0.5f     / RATE) * 0.30f;
+
+                // Las voces graves al centro y las agudas abiertas: da anchura
+                // sin descolocar el bajo.
+                float pan = (v - 1.5f) * 0.22f;
+                l += s * a * (1.0f - pan) * 0.5f;
+                r += s * a * (1.0f + pan) * 0.5f;
+            }
+        }
+
+        // --- repiques de cristal ---
+        for (int p = 0; p < MUS_PING_N; p++) {
+            float dt = t - MUS_PINGS[p].at;
+            if (dt < 0.0f) dt += MUS_SECONDS;    // el que cae al final da la vuelta
+            if (dt > 4.0f) continue;
+
+            float s = 0.0f;
+            for (int b = 0; b < BELL_N; b++) {
+                float e = expf(-dt / BELL[b].decay);
+                if (e < 0.001f) continue;
+                double inc = MUS_PINGS[p].freq * BELL[b].ratio / RATE;
+                // Fase deducida del tiempo: asi no hace falta guardar estado por
+                // repique y el bucle sigue siendo exacto.
+                double phase = fmod((double)dt * MUS_PINGS[p].freq * BELL[b].ratio, 1.0);
+                (void)inc;
+                float x = g_sine[(int)(phase * SINE_SIZE) & (SINE_SIZE - 1)];
+                s += x * BELL[b].amp * e;
+            }
+
+            float a = 0.085f;
+            l += s * a * (1.0f - MUS_PINGS[p].pan) * 0.5f;
+            r += s * a * (1.0f + MUS_PINGS[p].pan) * 0.5f;
+        }
+
+        // --- aire ---
+        rnd ^= rnd << 13; rnd ^= rnd >> 17; rnd ^= rnd << 5;
+        float n = ((float)(int32_t)rnd / 2147483648.0f);
+        air_lp += (n - air_lp) * 0.016;          // paso bajo de un polo
+        float air = (float)air_lp * 0.055f * (0.6f + 0.4f * sinf(t * 0.21f * 6.2831f));
+        l += air;
+        r += air;
+
+        // Saturacion suave: recorta los picos sin el chasquido del recorte duro.
+        l = tanhf(l * 1.15f) * 0.92f;
+        r = tanhf(r * 1.15f) * 0.92f;
+
+        out[i * 2 + 0] = (int16_t)(l * 32767.0f);
+        out[i * 2 + 1] = (int16_t)(r * 32767.0f);
+    }
+
+    // Coser el bucle: la cola se pliega sobre el principio con un cruce, asi que
+    // al repetir no hay salto. Sin esto se oye un golpe cada 32 segundos.
+    for (int i = 0; i < MUS_FADE; i++) {
+        float k = (float)i / MUS_FADE;
+        for (int c = 0; c < 2; c++) {
+            int idx = i * 2 + c;
+            int tail = (MUS_FRAMES + i) * 2 + c;
+            out[idx] = (int16_t)(out[idx] * k + out[tail] * (1.0f - k));
+        }
+    }
+}
+
+static int music_thread(void *ud)
+{
+    (void)ud;
+    sine_table_init();
+    audio_music_render(g_music_buf);
+    g_music_ready = true;
+    return 0;
+}
+
+int audio_music_frames(void) { return MUS_FRAMES + MUS_FADE; }
+
+void audio_music_init(void)
+{
+    if (!g_ready || g_music_buf) return;
+
+    // Se genera en un hilo aparte: son 32 segundos de audio y hacerlo en el
+    // arranque dejaba la app parada un rato antes de mostrar nada.
+    size_t bytes = (size_t)(MUS_FRAMES + MUS_FADE) * 2 * sizeof(int16_t);
+    g_music_buf = malloc(bytes);
+    if (!g_music_buf) return;
+
+    g_music_thread = SDL_CreateThread(music_thread, "nxss-music", NULL);
+    if (!g_music_thread) { free(g_music_buf); g_music_buf = NULL; }
+}
+
+void audio_music_poll(void)
+{
+    if (!g_music_ready || g_music) return;
+
+    if (g_music_thread) { SDL_WaitThread(g_music_thread, NULL); g_music_thread = NULL; }
+
+    size_t bytes = (size_t)MUS_FRAMES * 2 * sizeof(int16_t);
+    g_music = Mix_QuickLoad_RAW((Uint8 *)g_music_buf, (Uint32)bytes);
+    if (!g_music) return;
+
+    Mix_VolumeChunk(g_music, 30);            // de fondo es de fondo
+    if (g_music_on) {
+        Mix_PlayChannel(MUS_CHANNEL, g_music, -1);
+        g_music_playing = true;
+    }
+}
+
+void audio_set_music(bool on)
+{
+    g_music_on = on;
+    if (!g_music) return;
+
+    if (on && !g_music_playing) {
+        Mix_PlayChannel(MUS_CHANNEL, g_music, -1);
+        g_music_playing = true;
+    } else if (!on && g_music_playing) {
+        Mix_HaltChannel(MUS_CHANNEL);
+        g_music_playing = false;
+    }
+}
+
+bool audio_music_enabled(void) { return g_music_on; }
