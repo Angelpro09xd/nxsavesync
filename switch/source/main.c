@@ -111,7 +111,22 @@ static const char *policy_label(u8 p)
     case POLICY_SWITCH: return "Gana la Switch";
     case POLICY_PC:     return "Gana el PC";
     case POLICY_SKIP:   return "No tocar nada";
+    case POLICY_NEWEST: return "Gana el ultimo jugado";
     default:            return "Preguntar";
+    }
+}
+
+// Recorre las politicas. `con_preguntar` solo en los sitios donde tiene sentido
+// (por juego, para heredar la general); en segundo plano no hay a quien
+// preguntar, asi que esa opcion ni aparece.
+static u8 policy_next(u8 p, bool con_preguntar)
+{
+    switch (p) {
+    case POLICY_ASK:    return POLICY_SWITCH;
+    case POLICY_SWITCH: return POLICY_PC;
+    case POLICY_PC:     return POLICY_NEWEST;
+    case POLICY_NEWEST: return POLICY_SKIP;
+    default:            return con_preguntar ? POLICY_ASK : POLICY_SWITCH;
     }
 }
 
@@ -1175,7 +1190,7 @@ static void input_hosts(const ui_input_t *in)
 // vista de ajustes
 // --------------------------------------------------------------------------
 
-#define SET_ROWS 12
+#define SET_ROWS 13
 #define SET_VISIBLE 7
 
 static int g_set_top;
@@ -1192,6 +1207,7 @@ static void view_settings(const ui_input_t *in)
         "Segundo plano (sysmodule)",
         "Ante un conflicto en segundo plano",
         "Sincronizar cuando el PC avise",
+        "Dejar aviso en el Album",
         "Cada cuanto revisa en segundo plano",
         "Ajustes del PC",
         "Sincronizar todos los juegos ahora",
@@ -1206,6 +1222,7 @@ static void view_settings(const ui_input_t *in)
         "Sincroniza sin abrir la app, al cerrar cada juego",
         "Sin nadie delante no se puede preguntar",
         "Al terminar de jugar en el emulador, sin esperar al repaso",
+        "Si algo queda pendiente, se ve sin abrir la app",
         "Ademas del repaso al cerrar un juego y de los avisos",
         "Emuladores, replicado y vigilancia del daemon",
         "",
@@ -1220,9 +1237,10 @@ static void view_settings(const ui_input_t *in)
     snprintf(values[6], 96, "%s", g_set.bg_enabled ? "Activado" : "Desactivado");
     snprintf(values[7], 96, "%s", policy_label(g_set.bg_policy));
     snprintf(values[8], 96, "%s", g_set.bg_nudge ? "Si" : "No");
-    snprintf(values[9], 96, "%u min", g_set.bg_interval / 60);
-    snprintf(values[10], 96, "%s", g_server_name[0] ? g_server_name : "conectar");
-    snprintf(values[11], 96, "%zu juegos", g_games.n);
+    snprintf(values[9], 96, "%s", g_set.bg_album ? "Si" : "No");
+    snprintf(values[10], 96, "%u min", g_set.bg_interval / 60);
+    snprintf(values[11], 96, "%s", g_server_name[0] ? g_server_name : "conectar");
+    snprintf(values[12], 96, "%zu juegos", g_games.n);
 
     // La lista ya no cabe entera: se desplaza con la seleccion.
     if (g_row_sel < g_set_top)                    g_set_top = g_row_sel;
@@ -1255,11 +1273,7 @@ static void input_settings(const ui_input_t *in)
 
     switch (g_row_sel) {
     case 0: g_set.mode = g_set.mode == MODE_AUTO ? MODE_MANUAL : MODE_AUTO; break;
-    case 1:
-        g_set.policy = g_set.policy == POLICY_SWITCH ? POLICY_PC
-                     : g_set.policy == POLICY_PC     ? POLICY_SKIP
-                                                     : POLICY_SWITCH;
-        break;
+    case 1: g_set.policy = policy_next(g_set.policy, false); break;
     case 2: g_set.ask_incoming  = !g_set.ask_incoming;  break;
     case 3: g_set.sync_on_open  = !g_set.sync_on_open;  break;
     case 4: g_set.auto_discover = !g_set.auto_discover; break;
@@ -1275,12 +1289,11 @@ static void input_settings(const ui_input_t *in)
         break;
     case 7:
         // Sin nadie delante, "preguntar" no es una opcion: se salta el juego.
-        g_set.bg_policy = g_set.bg_policy == POLICY_SKIP   ? POLICY_SWITCH
-                        : g_set.bg_policy == POLICY_SWITCH ? POLICY_PC
-                                                           : POLICY_SKIP;
+        g_set.bg_policy = policy_next(g_set.bg_policy, false);
         break;
     case 8: g_set.bg_nudge = !g_set.bg_nudge; break;
-    case 9: {
+    case 9: g_set.bg_album = !g_set.bg_album; break;
+    case 10: {
         int min = g_set.bg_interval / 60;
         min = (in->down & HidNpadButton_Left) ? min - 5 : min + 5;
         if (min < 1)   min = 60;
@@ -1288,8 +1301,8 @@ static void input_settings(const ui_input_t *in)
         g_set.bg_interval = (u16)(min * 60);
         break;
     }
-    case 10: audio_play(SND_SELECT); g_modal = MODAL_PCCFG; pccfg_fetch(); return;
-    case 11:
+    case 11: audio_play(SND_SELECT); g_modal = MODAL_PCCFG; pccfg_fetch(); return;
+    case 12:
         audio_play(SND_SELECT);
         if (g_games.n) run_sync(0, g_games.n);
         return;

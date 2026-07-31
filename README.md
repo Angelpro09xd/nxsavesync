@@ -3,7 +3,7 @@
 Sincroniza las partidas guardadas entre una Switch con CFW y un emulador del PC,
 por wifi, en los dos sentidos.
 
-**Desarrollador: Angelpro09_Dev** · versión 3.6.0
+**Desarrollador: Angelpro09_Dev** · versión 4.0.0
 
 - **`common/`** — el motor: protocolo, red, manifiestos, ajustes. Lo comparten
   la app y el sysmodule, así que los dos se comportan igual.
@@ -105,7 +105,26 @@ eliges. **Automático**: no pregunta nunca y aplica la política configurada.
 |----------|----------------------------|
 | Gana la Switch | Se queda la versión de la consola |
 | Gana el PC | Se queda la del emulador |
+| **Gana el último jugado** | Se queda donde jugaste más tarde |
 | No tocar nada | Deja el juego como está y sigue con el resto |
+
+Están disponibles en los tres sitios: el ajuste general, el de cada juego y el
+del segundo plano.
+
+### Cómo puede saberse dónde se jugó más tarde
+
+Esto choca de frente con la regla de no comparar fechas, así que merece
+explicación. La consola manda **dos** marcas: la hora del save más reciente y
+**su hora actual**. Con la segunda el PC calcula el desfase entre los dos relojes
+y traduce la primera a su propia hora.
+
+Un reloj adelantado o atrasado deja de importar mientras sea **constante**, que
+es justo el caso de una consola desajustada. Está probado con un desvío simulado
+de cinco días en las dos direcciones.
+
+Si la consola no da fechas utilizables, o si la diferencia es menor de 90
+segundos, **no se elige a ciegas**: se deja el juego sin tocar. El log dice
+siempre qué se decidió y por qué (*"consola hace 3 min, PC hace 2 h"*).
 
 La política se puede fijar **por juego** desde la pantalla de opciones (X), y ahí
 mismo se puede **excluir** un juego para que no se sincronice nunca. Un juego

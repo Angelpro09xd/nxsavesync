@@ -19,6 +19,16 @@ typedef enum {
 // mensajes en pantalla, no estan disponibles para un proceso de fondo.
 void notify_led(notify_kind_t kind);
 
+// Guarda un aviso como imagen en el Album de la consola.
+//
+// Un proceso de fondo NO puede sacar un mensaje en pantalla: los servicios de
+// applet, que son los que dibujan encima del juego, no le estan permitidos. Los
+// unicos canales que le quedan son el LED del mando y esto. No es un pop-up,
+// pero se ve al abrir el Album y no depende de abrir la app.
+//
+// `lineas` termina con NULL.
+bool notify_album(const char *titulo, const char *const *lineas, notify_kind_t kind);
+
 // Deja constancia de la ultima sincronizacion de fondo para que la app la
 // muestre la proxima vez que se abra.
 void notify_record(notify_kind_t kind, int pulled, int pushed, int deleted,

@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/stat.h>
+
+#include "font8x8.h"
 
 // --------------------------------------------------------------------------
 // LED del boton HOME
@@ -130,4 +133,92 @@ bool notify_read(notify_info_t *out, bool consume)
 
     out->valid = true;
     return true;
+}
+
+// --------------------------------------------------------------------------
+// aviso como imagen en el Album
+// --------------------------------------------------------------------------
+
+#define ALBUM_W 1280
+#define ALBUM_H 720
+
+typedef struct { u8 r, g, b; } rgb_t;
+
+static void px(u8 *buf, int x, int y, rgb_t c)
+{
+    if (x < 0 || y < 0 || x >= ALBUM_W || y >= ALBUM_H) return;
+    u8 *p = buf + ((size_t)y * ALBUM_W + x) * 4;
+    p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = 0xFF;
+}
+
+static void fill(u8 *buf, int x, int y, int w, int h, rgb_t c)
+{
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++)
+            px(buf, x + i, y + j, c);
+}
+
+// Escribe una cadena escalando la fuente por un multiplo entero, que mantiene
+// los bordes limpios sin necesidad de suavizado.
+static void text(u8 *buf, int x, int y, int escala, rgb_t c, const char *s)
+{
+    for (; *s; s++) {
+        u8 ch = (u8)*s;
+        if (ch >= FONT_FIRST && ch <= FONT_LAST) {
+            const u8 *g = g_font8x8[ch - FONT_FIRST];
+            for (int fy = 0; fy < FONT_H; fy++)
+                for (int fx = 0; fx < FONT_W; fx++)
+                    if (g[fy] & (1 << fx))
+                        fill(buf, x + fx * escala, y + fy * escala, escala, escala, c);
+        }
+        x += FONT_W * escala;
+    }
+}
+
+bool notify_album(const char *titulo, const char *const *lineas, notify_kind_t kind)
+{
+    // 3,6 MB: se pide y se suelta aqui mismo, no se deja reservado.
+    size_t bytes = (size_t)ALBUM_W * ALBUM_H * 4;
+    u8 *buf = malloc(bytes);
+    if (!buf) return false;
+
+    const rgb_t fondo  = { 0x14, 0x17, 0x1C };
+    const rgb_t panel  = { 0x1E, 0x23, 0x2B };
+    const rgb_t texto  = { 0xEC, 0xEF, 0xF2 };
+    const rgb_t tenue  = { 0x8A, 0x93, 0xA0 };
+    const rgb_t acento = kind == NOTIFY_ATTENTION ? (rgb_t){ 0xF0, 0xB4, 0x3C }
+                       : kind == NOTIFY_FAIL      ? (rgb_t){ 0xE8, 0x5D, 0x5D }
+                                                  : (rgb_t){ 0x2E, 0xC4, 0xD3 };
+
+    fill(buf, 0, 0, ALBUM_W, ALBUM_H, fondo);
+
+    // Tarjeta centrada con una franja de color arriba.
+    const int cx = 140, cy = 130, cw = ALBUM_W - 280, chh = ALBUM_H - 260;
+    fill(buf, cx, cy, cw, chh, panel);
+    fill(buf, cx, cy, cw, 8, acento);
+
+    text(buf, cx + 48, cy + 52, 4, acento, "NX SAVE SYNC");
+    text(buf, cx + 48, cy + 110, 3, texto, titulo ? titulo : "");
+
+    fill(buf, cx + 48, cy + 158, cw - 96, 2, tenue);
+
+    int y = cy + 190;
+    for (int i = 0; lineas && lineas[i]; i++) {
+        text(buf, cx + 48, y, 2, i == 0 ? texto : tenue, lineas[i]);
+        y += 34;
+        if (y > cy + chh - 90) break;
+    }
+
+    text(buf, cx + 48, cy + chh - 54, 2, tenue, "Abre NX Save Sync para resolverlo");
+
+    bool ok = false;
+    if (R_SUCCEEDED(capssuInitialize())) {
+        CapsApplicationAlbumEntry entry;
+        ok = R_SUCCEEDED(capssuSaveScreenShot(buf, bytes, AlbumReportOption_Disable,
+                                              AlbumImageOrientation_Unknown0, &entry));
+        capssuExit();
+    }
+
+    free(buf);
+    return ok;
 }

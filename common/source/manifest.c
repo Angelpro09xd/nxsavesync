@@ -15,7 +15,15 @@ bool mf_join(char *out, size_t out_size, const char *root, const char *rel)
     return k > 0 && (size_t)k < out_size;
 }
 
-static bool mf_push(manifest_t *m, const char *rel, u64 size, u32 crc)
+u64 manifest_newest(const manifest_t *m)
+{
+    u64 newest = 0;
+    for (size_t i = 0; i < m->n; i++)
+        if (m->v[i].mtime > newest) newest = m->v[i].mtime;
+    return newest;
+}
+
+static bool mf_push(manifest_t *m, const char *rel, u64 size, u32 crc, u64 mtime)
 {
     if (m->n == m->cap) {
         size_t cap = m->cap ? m->cap * 2 : 64;
@@ -28,8 +36,9 @@ static bool mf_push(manifest_t *m, const char *rel, u64 size, u32 crc)
     mf_entry_t *e = &m->v[m->n];
     if (strlen(rel) >= sizeof(e->path)) return false;
     strcpy(e->path, rel);
-    e->size = size;
-    e->crc  = crc;
+    e->size  = size;
+    e->crc   = crc;
+    e->mtime = mtime;
     m->n++;
     return true;
 }
@@ -77,7 +86,15 @@ static bool walk(manifest_t *m, const char *root, const char *rel,
         } else {
             u32 crc; u64 size;
             if (!crc32_file(full, &crc, &size)) { ok = false; break; }
-            ok = mf_push(m, childrel, size, crc);
+
+            // La fecha solo se usa para la politica "gana el ultimo jugado".
+            // Si el sistema de archivos no la da, se manda 0 y el PC lo trata
+            // como desconocido en vez de inventarse un ganador.
+            u64 mtime = 0;
+            struct stat mst;
+            if (stat(full, &mst) == 0 && mst.st_mtime > 0) mtime = (u64)mst.st_mtime;
+
+            ok = mf_push(m, childrel, size, crc, mtime);
             if (ok && progress) progress(childrel, m->n, ud);
         }
     }

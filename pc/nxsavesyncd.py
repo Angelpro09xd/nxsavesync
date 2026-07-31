@@ -32,7 +32,7 @@ from pathlib import Path
 
 import emulators
 
-PROTO_VERSION = 3
+PROTO_VERSION = 4
 DEFAULT_PORT = 7878
 DISCOVERY_PORT = 7879
 MAX_FRAME = 64 * 1024 * 1024
@@ -64,7 +64,11 @@ ACT_PULL, ACT_PUSH, ACT_DEL_LOCAL, ACT_DEL_REMOTE, ACT_CONFLICT = 0, 1, 2, 3, 4
 WINNER_SWITCH, WINNER_PC = 0, 1
 
 MODE_MANUAL, MODE_AUTO = 0, 1
-POLICY_ASK, POLICY_SWITCH, POLICY_PC, POLICY_SKIP = 0, 1, 2, 3
+POLICY_ASK, POLICY_SWITCH, POLICY_PC, POLICY_SKIP, POLICY_NEWEST = 0, 1, 2, 3, 4
+
+# Margen por debajo del cual los dos lados se consideran empatados: no merece la
+# pena decidir una partida por unos segundos de diferencia.
+TIE_SECONDS = 90
 
 WARN_NONE, WARN_PC_EMPTY, WARN_SWITCH_EMPTY, WARN_ROOT_CHANGED = 0, 1, 2, 3
 DEC_SWITCH, DEC_PC, DEC_SKIP = 0, 1, 2
@@ -95,6 +99,25 @@ def _config_path() -> Path:
 STATE_DIR = _data_dir()
 CONFIG_PATH = _config_path()
 BACKUP_KEEP = 10
+
+# Rutas que el usuario puede cambiar desde la interfaz. Vacio = la de por
+# defecto, que es la que devuelve _data_dir().
+_rutas = {"backups": None, "estado": None}
+
+
+def set_rutas(backups: str | None = None, estado: str | None = None) -> None:
+    if backups is not None:
+        _rutas["backups"] = str(backups) if backups else None
+    if estado is not None:
+        _rutas["estado"] = str(estado) if estado else None
+
+
+def backups_dir() -> Path:
+    return Path(_rutas["backups"]) if _rutas["backups"] else STATE_DIR / "backups"
+
+
+def estado_dir() -> Path:
+    return Path(_rutas["estado"]) if _rutas["estado"] else STATE_DIR / "state"
 
 # Archivos que el emulador (o el escritorio) deja dentro de la carpeta del save
 # y que no forman parte de la partida. Si se sincronizaran, acabarian metidos en
@@ -317,7 +340,7 @@ def w_str(s: str) -> bytes:
 
 
 def state_path(uid: str, title_id: int) -> Path:
-    return STATE_DIR / "state" / uid / f"{title_id:016x}.json"
+    return estado_dir() / uid / f"{title_id:016x}.json"
 
 
 def load_base(uid: str, title_id: int, root: Path) -> tuple[dict[str, int], bool]:
@@ -367,12 +390,39 @@ def save_base(uid: str, title_id: int, manifest: dict[str, int], root: Path) -> 
     tmp.replace(p)
 
 
+def nombre_carpeta(title_name: str, title_id: int) -> str:
+    """Nombre de carpeta legible para un juego.
+
+    Antes las copias se guardaban solo con el title id, que no dice nada al
+    mirarlas meses despues. Ahora llevan el nombre delante y el id detras, que
+    sigue haciendo falta para no confundir dos juegos que se llamen parecido.
+    """
+    limpio = "".join(c if (c.isalnum() or c in " -_.()[]") else "_"
+                     for c in (title_name or "").strip())
+    limpio = " ".join(limpio.split())[:60].rstrip(". ")
+    return f"{limpio} [{title_id:016X}]" if limpio else f"{title_id:016X}"
+
+
 def make_backup(uid: str, title_id: int, root: Path, title_name: str) -> None:
     """Copia de seguridad de la carpeta del PC antes de tocarla."""
     if not root.is_dir() or not any(root.rglob("*")):
         return
 
-    dest_dir = STATE_DIR / "backups" / uid / f"{title_id:016x}"
+    dest_dir = backups_dir() / uid / nombre_carpeta(title_name, title_id)
+
+    # Si ya habia copias con el nombre viejo (solo el id), se trasladan para no
+    # dejar el historial partido en dos sitios.
+    antiguo = backups_dir() / uid / f"{title_id:016x}"
+    if antiguo.is_dir() and antiguo != dest_dir:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for z in antiguo.glob("*.zip"):
+            destino = dest_dir / z.name
+            if not destino.exists():
+                z.rename(destino)
+        try:
+            antiguo.rmdir()
+        except OSError:
+            pass
     dest_dir.mkdir(parents=True, exist_ok=True)
     # Con precision de segundo, dos syncs seguidas se pisarian la copia.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
@@ -496,12 +546,19 @@ def resolve_plan(
 
 
 def apply_policy(
-    plan: list[tuple[int, str]], switch: dict[str, int], pc: dict[str, int], policy: int
+    plan: list[tuple[int, str]], switch: dict[str, int], pc: dict[str, int],
+    policy: int, ganador_reciente: int = -1
 ) -> tuple[list[tuple[int, str]], bool]:
     """Resuelve los conflictos en modo automatico. Devuelve (plan, hubo_conflicto)."""
     had = any(a == ACT_CONFLICT for a, _ in plan)
     if not had:
         return plan, False
+
+    if policy == POLICY_NEWEST:
+        # Si no se pudo averiguar quien jugo mas tarde, no se elige a ciegas.
+        if ganador_reciente in (WINNER_SWITCH, WINNER_PC):
+            return resolve_plan(plan, switch, pc, ganador_reciente), True
+        return [], True
 
     if policy == POLICY_SWITCH:
         return resolve_plan(plan, switch, pc, WINNER_SWITCH), True
@@ -771,6 +828,8 @@ class Session:
         name = self.conn.r_str()
         mode = self.conn.r_u8()
         policy = self.conn.r_u8()
+        switch_clock = self.conn.r_u64()     # hora actual de la consola
+        switch_newest = self.conn.r_u64()    # fecha del save mas reciente
         count = self.conn.r_u32()
 
         switch: dict[str, int] = {}
@@ -786,6 +845,13 @@ class Session:
         log(f"{name} [{title_id:016X}]  perfil {user_name or uid[:8]}")
         log(f"  switch={len(switch)} archivos  pc={len(pc)}  base={len(base)}")
 
+        # Solo se calcula si hace falta, que implica recorrer la carpeta.
+        ganador_reciente, motivo_reciente = -1, ""
+        if policy == POLICY_NEWEST:
+            ganador_reciente, motivo_reciente = decide_newest(
+                switch_clock, switch_newest, root)
+            log(f"  ultimo jugado: {motivo_reciente}")
+
         self.titles[(uid, title_id)] = {
             "name": name, "switch": switch, "pc": pc, "plan": [], "root": root
         }
@@ -794,6 +860,19 @@ class Session:
 
         warning, message = detect_warning(switch, pc, base, root_changed)
         if warning != WARN_NONE:
+            # Con "gana el ultimo jugado" el aviso tambien se resuelve solo,
+            # siempre que se haya podido averiguar donde se jugo despues.
+            if (mode == MODE_AUTO and policy == POLICY_NEWEST
+                    and ganador_reciente in (WINNER_SWITCH, WINNER_PC)):
+                decision = (DEC_SWITCH if ganador_reciente == WINNER_SWITCH
+                            else DEC_PC)
+                plan = replan_after_decision(switch, pc, decision)
+                self.titles[(uid, title_id)]["plan"] = plan
+                log(f"  aviso resuelto solo ({motivo_reciente}): "
+                    f"{len(plan)} accion(es)")
+                self.conn.send(OP_PLAN_RES, encode_warning(WARN_NONE, "") + encode_plan(plan))
+                return
+
             if mode == MODE_AUTO and policy in (POLICY_SWITCH, POLICY_PC):
                 # En automatico ya hay una regla dicha de antemano: se aplica sin
                 # preguntar, que es justo lo que se pidio al elegir ese modo.
@@ -812,10 +891,14 @@ class Session:
         log(f"  -> {len(plan)} accion(es)")
 
         if mode == MODE_AUTO:
-            plan, auto_resolved = apply_policy(plan, switch, pc, policy)
+            plan, auto_resolved = apply_policy(plan, switch, pc, policy,
+                                               ganador_reciente)
             if auto_resolved:
                 if plan:
-                    log(f"  conflicto resuelto solo: {policy_name(policy)}")
+                    detalle = motivo_reciente if policy == POLICY_NEWEST else policy_name(policy)
+                    log(f"  conflicto resuelto solo: {detalle}")
+                elif policy == POLICY_NEWEST:
+                    log(f"  conflicto sin resolver: {motivo_reciente or 'no se sabe'}")
                 else:
                     log(f"  conflicto: no se toca nada (politica '{policy_name(policy)}')")
 
@@ -1055,7 +1138,68 @@ class Session:
 
 def policy_name(p: int) -> str:
     return {POLICY_SWITCH: "gana la Switch", POLICY_PC: "gana el PC",
-            POLICY_SKIP: "no tocar nada"}.get(p, "preguntar")
+            POLICY_SKIP: "no tocar nada",
+            POLICY_NEWEST: "gana el ultimo jugado"}.get(p, "preguntar")
+
+
+def newest_mtime(root: Path) -> float:
+    """Fecha del archivo mas reciente de la carpeta. 0 si no hay ninguno."""
+    ultimo = 0.0
+    if not root.is_dir():
+        return ultimo
+    for p in root.rglob("*"):
+        if p.is_file() and p.name not in IGNORED_FILES:
+            try:
+                ultimo = max(ultimo, p.stat().st_mtime)
+            except OSError:
+                pass
+    return ultimo
+
+
+def decide_newest(switch_clock: float, switch_newest: float,
+                  root: Path) -> tuple[int, str]:
+    """Quien jugo mas tarde, la consola o el PC.
+
+    Devuelve (WINNER_*, explicacion) o (-1, motivo) si no se puede saber.
+
+    Los dos relojes no son comparables tal cual: el de una Switch con CFW se
+    desajusta y el emulador escribe con la hora del PC. Por eso la consola manda
+    tambien su hora ACTUAL: con ella se calcula el desfase entre relojes y se
+    traduce la fecha del save a la hora de este PC. Un reloj adelantado o
+    atrasado deja de importar mientras sea constante, que es el caso normal.
+    """
+    if not switch_clock or not switch_newest:
+        return -1, "la consola no da fechas utiles"
+
+    pc_newest = newest_mtime(root)
+    if not pc_newest:
+        return WINNER_SWITCH, "el PC no tiene nada"
+
+    ahora = time.time()
+    desfase = ahora - switch_clock          # cuanto adelanta/atrasa la consola
+    switch_en_hora_pc = switch_newest + desfase
+
+    diff = switch_en_hora_pc - pc_newest
+
+    def hace(seg: float) -> str:
+        seg = abs(seg)
+        if seg < 90:
+            return f"hace {int(seg)} s"
+        if seg < 5400:
+            return f"hace {int(seg // 60)} min"
+        if seg < 172800:
+            return f"hace {int(seg // 3600)} h"
+        return f"hace {int(seg // 86400)} dias"
+
+    detalle = (f"consola {hace(ahora - switch_en_hora_pc)}, "
+               f"PC {hace(ahora - pc_newest)}")
+
+    if abs(diff) <= TIE_SECONDS:
+        return -1, f"empate tecnico ({detalle})"
+
+    if diff > 0:
+        return WINNER_SWITCH, f"se jugo despues en la consola ({detalle})"
+    return WINNER_PC, f"se jugo despues en el PC ({detalle})"
 
 
 def load_base_quiet(uid: str, title_id: int, root: Path) -> dict[str, int]:
@@ -1103,6 +1247,12 @@ class Runtime:
         self.stats = {"conexiones": 0, "archivos": 0, "ultima": None,
                       "ultima_juegos": 0}
         self.fallback = Path(args.fallback).expanduser().resolve()
+
+        # Rutas que el usuario puede cambiar: copias, estado y donde buscar
+        # emuladores. Vacio significa "la de por defecto".
+        set_rutas(cfg.get("ruta_backups"), cfg.get("ruta_estado"))
+        emulators.set_extra_roots(cfg.get("carpetas_emuladores", []))
+
         self.refresh_emulators()
 
     # -- emuladores ---------------------------------------------------------
@@ -1321,6 +1471,18 @@ class Runtime:
         items.append(dict(key="saves_path", type=CFG_INFO, label="Carpeta de saves",
                           help="", value=self.describe(), options=[]))
 
+        items.append(dict(key="ruta_backups", type=CFG_INFO,
+                          label="Carpeta de copias de seguridad",
+                          help="Se cambia desde la app del PC",
+                          value=str(backups_dir()), options=[]))
+
+        extras = emulators.extra_roots()
+        items.append(dict(key="carpetas_extra", type=CFG_INFO,
+                          label="Carpetas de emuladores anadidas",
+                          help="Para emuladores fuera de las rutas habituales",
+                          value=(", ".join(extras) if extras else "ninguna"),
+                          options=[]))
+
         items.append(dict(key="rescan", type=CFG_ACTION, label="Volver a buscar emuladores",
                           help="Utiil si acabas de instalar uno",
                           value="", options=[]))
@@ -1398,6 +1560,23 @@ class Runtime:
             self.cfg["backup_keep"] = n
             BACKUP_KEEP = n
             return f"Se guardaran {n} copias"
+
+        if key == "ruta_backups":
+            self.cfg["ruta_backups"] = value or None
+            set_rutas(backups=value)
+            return f"Copias en {backups_dir()}"
+
+        if key == "ruta_estado":
+            self.cfg["ruta_estado"] = value or None
+            set_rutas(estado=value)
+            return f"Estado en {estado_dir()}"
+
+        if key == "carpetas_emuladores":
+            rutas = [r.strip() for r in value.split("|") if r.strip()]
+            self.cfg["carpetas_emuladores"] = rutas
+            emulators.set_extra_roots(rutas)
+            n = self.refresh_emulators()
+            return f"{len(rutas)} carpeta(s), {n} emulador(es) detectado(s)"
 
         if key == "rescan":
             n = self.refresh_emulators()
@@ -1492,7 +1671,8 @@ def main(argv=None, stop_event=None, rt_hook=None) -> int:
     srv.listen(1)
 
     log(f"Escuchando en {args.bind}:{args.port}  (saves: {where})")
-    log(f"Estado y copias de seguridad en {STATE_DIR}")
+    log(f"Estado en {estado_dir()}")
+    log(f"Copias de seguridad en {backups_dir()}")
     for ip in local_ips():
         log(f"  IP de este PC: {ip}  (la consola lo encuentra sola)")
 

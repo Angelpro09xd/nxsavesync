@@ -99,13 +99,28 @@ def _search_roots(home: Path, windows: bool | None = None) -> list[Path]:
                 roots.append(app / "data")
                 roots.append(app / "config")
 
-    # Carpetas extra que indique el usuario, separadas por el separador del
-    # sistema. Util para emuladores en otra unidad (D:\Emus, /mnt/juegos...).
+    # Carpetas extra que indique el usuario, por variable de entorno o desde la
+    # configuracion. Util para emuladores en otra unidad (D:\Emus, /mnt/juegos).
     extra = os.environ.get("NXSAVESYNC_EMU_DIRS", "")
     if extra:
         roots += [Path(p) for p in extra.split(os.pathsep) if p]
 
+    roots += [Path(p) for p in (_extra_roots or []) if p]
+
     return [r for r in roots if r.is_dir()]
+
+
+# Carpetas extra fijadas desde la configuracion.
+_extra_roots: list[str] = []
+
+
+def set_extra_roots(rutas) -> None:
+    global _extra_roots
+    _extra_roots = [str(r) for r in (rutas or []) if str(r).strip()]
+
+
+def extra_roots() -> list[str]:
+    return list(_extra_roots)
 
 
 def _scan(home: Path, marker: str, known: set[str],

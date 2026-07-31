@@ -26,9 +26,9 @@ OP = dict(HELLO=0x01, HELLO_OK=0x81, PLAN_REQ=0x02, PLAN_RES=0x82,
 WARN_NONE, WARN_PC_EMPTY, WARN_SWITCH_EMPTY, WARN_ROOT_CHANGED = 0, 1, 2, 3
 DEC_SWITCH, DEC_PC, DEC_SKIP = 0, 1, 2
 
-VERSION = 3
+VERSION = 4
 MODE_MANUAL, MODE_AUTO = 0, 1
-POLICY_ASK, POLICY_SWITCH, POLICY_PC, POLICY_SKIP = 0, 1, 2, 3
+POLICY_ASK, POLICY_SWITCH, POLICY_PC, POLICY_SKIP, POLICY_NEWEST = 0, 1, 2, 3, 4
 SUM_SYNCED, SUM_PC_CHANGED, SUM_UNKNOWN, SUM_NO_DIR = 0, 1, 2, 3
 
 # El uid del perfil viaja como dos u64 little-endian.
@@ -123,7 +123,7 @@ def parse_plan(data):
 
 
 def sync(conflict_winner=None, expect_error=False, mode=MODE_MANUAL,
-         policy=POLICY_ASK, decision=None):
+         policy=POLICY_ASK, decision=None, reloj=0, reciente=0):
     """Una sesion completa de sincronizacion de un juego."""
     c = Client()
     c.send(OP["HELLO"], struct.pack("<I", VERSION) + w_str("test") + w_str("dev"))
@@ -132,7 +132,8 @@ def sync(conflict_winner=None, expect_error=False, mode=MODE_MANUAL,
 
     m = manifest(SWITCH)
     c.send(OP["PLAN_REQ"], UID + w_str("Angel") + struct.pack("<Q", TITLE)
-           + w_str("Juego De Prueba") + bytes([mode, policy]) + enc_manifest(m, SWITCH))
+           + w_str("Juego De Prueba") + bytes([mode, policy])
+           + struct.pack("<QQ", reloj, reciente) + enc_manifest(m, SWITCH))
 
     op = c.hdr()
     if expect_error:
@@ -350,7 +351,8 @@ def main():
         c.hdr(); c.body()
         evil = struct.pack("<I", 1) + w_str("../../../../etc/pwned") + struct.pack("<Q", 3) + struct.pack("<I", 0)
         c.send(OP["PLAN_REQ"], UID + w_str("Angel") + struct.pack("<Q", TITLE)
-                           + w_str("Malo") + bytes([MODE_MANUAL, POLICY_ASK]) + evil)
+                           + w_str("Malo") + bytes([MODE_MANUAL, POLICY_ASK])
+                           + struct.pack("<QQ", 0, 0) + evil)
         check("el servidor rechaza '..'", c.hdr() == OP["ERROR"])
         c.body()
         c.s.close()
@@ -432,7 +434,7 @@ def main():
         # el estado ni los archivos del primero.
         c.send(OP["PLAN_REQ"], OTHER + w_str("Otro") + struct.pack("<Q", TITLE)
                + w_str("Juego De Prueba") + bytes([MODE_MANUAL, POLICY_ASK])
-               + struct.pack("<I", 0))
+               + struct.pack("<QQ", 0, 0) + struct.pack("<I", 0))
         assert c.hdr() == OP["PLAN_RES"]
         otro_plan = parse_plan(c.body())
         c.s.close()
@@ -565,7 +567,7 @@ def main():
         m = manifest(SWITCH)
         c.send(OP["PLAN_REQ"], UID + w_str("Angel") + struct.pack("<Q", TITLE)
                + w_str("Juego De Prueba") + bytes([MODE_MANUAL, POLICY_ASK])
-               + enc_manifest(m, SWITCH))
+               + struct.pack("<QQ", 0, 0) + enc_manifest(m, SWITCH))
         assert c.hdr() == OP["PLAN_RES"]
         _, _, rest = parse_warning(c.body())
         propuesto = parse_plan(rest)
@@ -594,6 +596,91 @@ def main():
         check("y el PC recibe esa version",
               (pcdir / "system/data_001.sav").read_bytes() == b"lo que quiero conservar")
         check("los dos lados quedan iguales", manifest(pcdir) == manifest(SWITCH))
+
+        print("\n22) 'Gana el ultimo lugar jugado'")
+        import os as _os
+
+        def conflicto(sw, pc_bytes, edad_pc_seg):
+            """Deja los dos lados en conflicto, con el PC tocado hace X segundos.
+
+            Se envejece la carpeta entera, no solo el archivo cambiado: el
+            daemon mira la fecha del mas reciente de todos, asi que dejar otro
+            recien escrito falsearia la comparacion.
+            """
+            (SWITCH / "system/data_001.sav").write_bytes(sw)
+            sync(mode=MODE_AUTO, policy=POLICY_SWITCH)          # base coherente
+            (SWITCH / "system/data_001.sav").write_bytes(sw + b" (consola)")
+            (pcdir / "system/data_001.sav").write_bytes(pc_bytes)
+
+            t = time.time() - edad_pc_seg
+            for f in pcdir.rglob("*"):
+                if f.is_file():
+                    _os.utime(f, (t, t))
+
+        ahora = int(time.time())
+
+        # a) Se jugo despues en la consola: el save de la Switch es de ahora
+        #    mismo y el del PC de hace una hora.
+        conflicto(b"base a", b"pc viejo", 3600)
+        plan = sync(mode=MODE_AUTO, policy=POLICY_NEWEST, reloj=ahora, reciente=ahora)
+        check("gana la consola si jugaste alli despues",
+              plan == [("PUSH", "system/data_001.sav")])
+
+        # b) Al reves: el save de la consola es de hace dos horas.
+        conflicto(b"base b", b"pc nuevo", 0)
+        plan = sync(mode=MODE_AUTO, policy=POLICY_NEWEST,
+                    reloj=ahora, reciente=ahora - 7200)
+        check("gana el PC si jugaste alli despues",
+              plan == [("PULL", "system/data_001.sav")])
+
+        print("\n22b) Con el reloj de la consola desajustado")
+        # Es el caso real: una Switch con CFW puede ir dias desviada. Como manda
+        # tambien su hora actual, el PC calcula el desfase y lo compensa.
+        DESVIO = 5 * 24 * 3600      # la consola cree que es cinco dias despues
+        conflicto(b"base c", b"pc viejo", 3600)
+        plan = sync(mode=MODE_AUTO, policy=POLICY_NEWEST,
+                    reloj=ahora + DESVIO, reciente=ahora + DESVIO)
+        check("un reloj adelantado 5 dias no confunde a nadie",
+              plan == [("PUSH", "system/data_001.sav")])
+
+        conflicto(b"base d", b"pc nuevo", 0)
+        plan = sync(mode=MODE_AUTO, policy=POLICY_NEWEST,
+                    reloj=ahora - DESVIO, reciente=ahora - DESVIO - 7200)
+        check("y uno atrasado tampoco",
+              plan == [("PULL", "system/data_001.sav")])
+
+        print("\n22c) Cuando no se puede saber, no se elige a ciegas")
+        conflicto(b"base e", b"pc x", 3600)
+        antes_sw = manifest(SWITCH)
+        antes_pc = manifest(pcdir)
+        plan = sync(mode=MODE_AUTO, policy=POLICY_NEWEST, reloj=0, reciente=0)
+        check("sin fechas de la consola no toca nada", plan == [])
+        check("la Switch queda intacta", manifest(SWITCH) == antes_sw)
+        check("y el PC tambien", manifest(pcdir) == antes_pc)
+
+        # Empate tecnico: diferencia menor que el margen.
+        conflicto(b"base f", b"pc y", 10)
+        plan = sync(mode=MODE_AUTO, policy=POLICY_NEWEST, reloj=ahora, reciente=ahora)
+        check("un empate tecnico tampoco decide", plan == [])
+        sync(mode=MODE_AUTO, policy=POLICY_SWITCH)      # dejarlo coherente
+
+        print("\n23) Las copias llevan el nombre del juego")
+        import nxsavesyncd as dmod
+        check("nombre legible con el id detras",
+              dmod.nombre_carpeta("Super Mario Odyssey", 0x0100000000010000)
+              == "Super Mario Odyssey [0100000000010000]")
+        check("se limpian los caracteres que no valen en un nombre de carpeta",
+              "/" not in dmod.nombre_carpeta("Pokemon: Let's Go / Eevee", 1)
+              and "\\" not in dmod.nombre_carpeta("A\\B", 1))
+        check("sin nombre se queda solo el id",
+              dmod.nombre_carpeta("", 0x0100152000022000) == "0100152000022000")
+        check("un nombre larguisimo se recorta",
+              len(dmod.nombre_carpeta("x" * 300, 1)) < 90)
+
+        zips = list((STATE / "nxsavesync/backups").rglob("*.zip"))
+        con_nombre = [z for z in zips if "Juego De Prueba" in str(z)]
+        check(f"las copias reales ya llevan el nombre ({len(con_nombre)} de {len(zips)})",
+              len(con_nombre) > 0)
 
         print("\nTODO OK")
     finally:

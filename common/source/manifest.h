@@ -9,6 +9,7 @@ typedef struct {
     char path[PROTO_MAX_PATH];  // relativa a la raiz del savedata, con '/'
     u64  size;
     u32  crc;
+    u64  mtime;                 // hora de la consola; 0 si no se sabe
 } mf_entry_t;
 
 typedef struct {
@@ -22,6 +23,10 @@ typedef struct {
 bool manifest_build(manifest_t *m, const char *root,
                     void (*progress)(const char *rel, size_t done, void *ud),
                     void *ud);
+
+// Fecha del archivo mas reciente del manifiesto, en la hora de la consola.
+// Devuelve 0 si el sistema de archivos no da fechas utiles.
+u64 manifest_newest(const manifest_t *m);
 
 void manifest_free(manifest_t *m);
 

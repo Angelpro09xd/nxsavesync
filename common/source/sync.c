@@ -369,6 +369,16 @@ static bool do_del_remote(net_t *n, AccountUid uid, u64 app_id, const char *rel,
 // sincronizacion de un juego
 // --------------------------------------------------------------------------
 
+// Hora actual de la consola, en segundos. Sirve para que el PC calcule el
+// desfase entre los dos relojes; si no se puede leer se manda 0 y la politica
+// "gana el ultimo jugado" se abstiene.
+static u64 console_clock(void)
+{
+    u64 ts = 0;
+    if (R_FAILED(timeGetCurrentTime(TimeType_LocalSystemClock, &ts))) return 0;
+    return ts;
+}
+
 static void send_manifest(net_t *n, manifest_t *m)
 {
     net_w_u32(n, (u32)m->n);
@@ -457,6 +467,8 @@ bool sync_title(net_t *n, AccountUid uid, const char *user_name,
     net_w_str(n, title_name);
     net_w_u8(n, mode);
     net_w_u8(n, policy);
+    net_w_u64(n, console_clock());
+    net_w_u64(n, manifest_newest(&m));
     send_manifest(n, &m);
     // Ojo: `m` no se libera aqui. Si el plan sale vacio lo reutilizamos para el
     // COMMIT y nos ahorramos volver a leer y recalcular el CRC del save entero.

@@ -71,7 +71,7 @@ def main():
     print("\n3) Acepta conexiones y avisa de ellas")
     c = socket.create_connection(("127.0.0.1", PORT), timeout=5)
     c.sendall(bytes([0x01]) + struct.pack("<I", 4 + 2 + 6 + 2 + 3)
-              + struct.pack("<I", 3) + struct.pack("<H", 6) + b"switch"
+              + struct.pack("<I", daemon.PROTO_VERSION) + struct.pack("<H", 6) + b"switch"
               + struct.pack("<H", 3) + b"dev")
     hdr = c.recv(5)
     check("responde al saludo", hdr and hdr[0] == 0x81)
@@ -93,7 +93,8 @@ def main():
     class Cli:
         def __init__(self):
             self.s = socket.create_connection(("127.0.0.1", PORT), timeout=10)
-            self.send(0x01, struct.pack("<I", 3) + w_str("test") + w_str("dev"))
+            self.send(0x01, struct.pack("<I", daemon.PROTO_VERSION)
+                      + w_str("test") + w_str("dev"))
             self.recv()
 
         def send(self, op, p=b""):
@@ -116,7 +117,8 @@ def main():
                 man += (w_str(nombre) + struct.pack("<Q", len(datos))
                         + struct.pack("<I", zlib.crc32(datos)))
             self.send(0x02, UID + w_str("Angel") + struct.pack("<Q", TITLE)
-                      + w_str("Juego De Prueba") + bytes([0, 0]) + man)
+                      + w_str("Juego De Prueba") + bytes([0, 0])
+                      + struct.pack("<QQ", 0, 0) + man)
             op, r = self.recv()
             (ln,) = struct.unpack_from("<H", r, 1)
             pos = 3 + ln
@@ -173,15 +175,26 @@ def main():
     tray = importlib.util.module_from_spec(spec)
     loader.exec_module(tray)
 
-    t, x = tray.resume_tanda(["Zelda BotW"], 3)
+    t, x = tray.resume_tanda(["Zelda BotW"], a_consola=3)
     check(f"singular con un juego ({t})", t.startswith("1 partida sincronizada"))
-    t, x = tray.resume_tanda(["Zelda", "Minecraft", "Tomodachi"], 12)
-    check(f"plural y total de archivos ({t})",
-          t.startswith("3 partidas") and "12 archivos" in t)
-    check("lista los nombres", x == "Zelda, Minecraft, Tomodachi")
+
+    # Lo importante: se distingue que el PC ha mandado archivos a la consola,
+    # que es cuando de verdad te ha cambiado lo que tienes en la Switch.
+    t, x = tray.resume_tanda(["Zelda", "Minecraft"], a_consola=8, al_pc=0)
+    check(f"avisa de lo enviado a la consola ({t})", "8 a la consola" in t)
+    check("y no menciona el PC si no fue nada", "al PC" not in t)
+
+    t, x = tray.resume_tanda(["Tomodachi"], a_consola=0, al_pc=3)
+    check(f"avisa de lo recibido de la consola ({t})",
+          "3 al PC" in t and "a la consola" not in t)
+
+    t, x = tray.resume_tanda(["Zelda", "Mario", "Kirby"], a_consola=5, al_pc=12)
+    check(f"y de las dos direcciones a la vez ({t})",
+          "5 a la consola" in t and "12 al PC" in t)
+    check("lista los nombres", x == "Zelda, Mario, Kirby")
 
     largos = [f"Juego con un nombre muy largo numero {i}" for i in range(20)]
-    t, x = tray.resume_tanda(largos, 99)
+    t, x = tray.resume_tanda(largos, a_consola=99)
     check(f"recorta y resume el resto ({len(x)} car.)", len(x) < 255 and "mas" in x)
 
     print("\n3d) El PC avisa a la red cuando cambia el emulador")

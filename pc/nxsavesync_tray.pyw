@@ -195,21 +195,32 @@ ID_RESCAN = 1003
 ID_AUTOSTART = 1004
 ID_SALIR = 1005
 ID_MIRROR = 1006
+ID_VENTANA = 1007
 ID_EMU_BASE = 1100          # 1100 + n para cada emulador
 
 
-def resume_tanda(nombres: list[str], archivos: int = 0,
-                 limite: int = 200) -> tuple[str, str]:
+def resume_tanda(nombres: list[str], a_consola: int = 0, al_pc: int = 0,
+                 limite: int = 170) -> tuple[str, str]:
     """Titulo y texto del aviso a partir de los juegos sincronizados.
 
     Aparte de la clase y sin tocar Win32 para poder probarlo en cualquier
     sistema: el globo de Windows corta a 255 caracteres y conviene asegurarse
     de que el recorte cae bien.
+
+    Se separa por direccion porque no es lo mismo que el PC haya mandado una
+    partida a la consola que al reves: en el primer caso te acaba de cambiar
+    lo que tienes en la Switch.
     """
     n = len(nombres)
     titulo = "1 partida sincronizada" if n == 1 else f"{n} partidas sincronizadas"
-    if archivos:
-        titulo += f"  ({archivos} archivo" + ("" if archivos == 1 else "s") + ")"
+
+    partes = []
+    if a_consola:
+        partes.append(f"{a_consola} a la consola")
+    if al_pc:
+        partes.append(f"{al_pc} al PC")
+    if partes:
+        titulo += "  (" + ", ".join(partes) + ")"
 
     texto, mostrados = "", 0
     for nombre in nombres:
@@ -238,7 +249,8 @@ class Tray:
         # Lo sincronizado en la conexion actual. Se avisa al final y de una vez:
         # un globo por juego serian once seguidos y no se lee ninguno.
         self.tanda: list[str] = []
-        self.tanda_archivos = 0
+        self.tanda_a_consola = 0     # archivos que el PC ha mandado a la Switch
+        self.tanda_al_pc = 0         # archivos que han venido de la Switch
 
     # -- registro -----------------------------------------------------------
 
@@ -259,7 +271,8 @@ class Tray:
         if tipo == "conectado":
             self.estado = f"sincronizando con {dato}"
             self.tanda = []
-            self.tanda_archivos = 0
+            self.tanda_a_consola = 0
+            self.tanda_al_pc = 0
             self.actualiza_tip()
 
         elif tipo == "sync":
@@ -267,7 +280,9 @@ class Tray:
             if isinstance(dato, dict):
                 if dato.get("cambios", 0) > 0:
                     self.tanda.append(dato.get("nombre") or "?")
-                    self.tanda_archivos += dato["cambios"]
+                    # "bajados" son los que el PC envia a la consola.
+                    self.tanda_a_consola += dato.get("bajados", 0)
+                    self.tanda_al_pc += dato.get("subidos", 0)
             elif dato:
                 self.tanda.append(str(dato))
 
@@ -281,14 +296,15 @@ class Tray:
         if not self.tanda:
             return
 
-        titulo, texto = resume_tanda(self.tanda, self.tanda_archivos)
+        titulo, texto = resume_tanda(self.tanda, self.tanda_a_consola, self.tanda_al_pc)
 
         if self.rt:
             self.rt.stats["ultima_juegos"] = len(self.tanda)
 
         self.globo(titulo, texto, NIIF_INFO)
         self.tanda = []
-        self.tanda_archivos = 0
+        self.tanda_a_consola = 0
+        self.tanda_al_pc = 0
 
     # -- icono de la bandeja -------------------------------------------------
 
@@ -392,6 +408,8 @@ class Tray:
             cabecera += ")"
         user32.AppendMenuW(hmenu, MF_STRING | MF_GRAYED, ID_ESTADO, cabecera)
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(hmenu, MF_STRING, ID_VENTANA, "Abrir NX Save Sync")
+        user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
 
         # Un submenu con los emuladores detectados y su interruptor.
         if self.rt and self.rt.emus:
@@ -430,7 +448,10 @@ class Tray:
         user32.DestroyMenu(hmenu)
 
     def comando(self, ident: int) -> None:
-        if ident == ID_SALIR:
+        if ident == ID_VENTANA:
+            self.abre_ventana()
+
+        elif ident == ID_SALIR:
             user32.DestroyWindow(self.hwnd)
 
         elif ident == ID_LOG:
@@ -462,6 +483,15 @@ class Tray:
                 self.rt.cfg["emuladores_desactivados"] = sorted(self.rt.disabled)
                 daemon.save_config(self.rt.cfg)
 
+    def abre_ventana(self) -> None:
+        """La ventana de ajustes, en su propio hilo para no parar la bandeja."""
+        try:
+            import nxsavesync_ventana
+            nxsavesync_ventana.abrir_ventana(self, daemon)
+        except Exception as e:
+            self.anota(f"No se pudo abrir la ventana: {e}")
+            self.globo(APP_NAME, f"No se pudo abrir la ventana: {e}", NIIF_ERROR)
+
     def abre(self, ruta: Path) -> None:
         try:
             ruta.parent.mkdir(parents=True, exist_ok=True)
@@ -480,8 +510,10 @@ class Tray:
             evento = lparam & 0xFFFF
             if evento == WM_RBUTTONUP:
                 self.menu()
-            elif evento in (WM_LBUTTONUP, WM_LBUTTONDBLCLK, NIN_BALLOONUSERCLICK):
-                self.abre(self.log_path)
+            elif evento == WM_LBUTTONDBLCLK:
+                self.abre_ventana()
+            elif evento in (WM_LBUTTONUP, NIN_BALLOONUSERCLICK):
+                self.abre_ventana()
             return 0
 
         if msg == WM_COMMAND:

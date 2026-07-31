@@ -3,7 +3,7 @@
 
 #include <switch.h>
 
-#define PROTO_VERSION      3
+#define PROTO_VERSION      4
 #define PROTO_DEFAULT_PORT 7878
 #define PROTO_DISC_PORT    7879   // descubrimiento por UDP
 #define PROTO_NUDGE_PORT   7880   // toque del PC a la consola
@@ -100,7 +100,26 @@ enum {
     POLICY_SWITCH     = 1,   // ante la duda gana la consola
     POLICY_PC         = 2,   // ante la duda gana el PC
     POLICY_SKIP       = 3,   // no tocar nada si hay conflicto
+    POLICY_NEWEST     = 4,   // gana donde se jugo mas tarde
 };
+
+// POLICY_NEWEST necesita comparar cuando se jugo en cada lado, y eso choca con
+// la regla general de no comparar fechas entre consola y PC: el reloj de una
+// Switch con CFW se desajusta y el emulador escribe con la hora del PC.
+//
+// Se resuelve mandando dos marcas en PLAN_REQ: la hora que tiene la consola
+// AHORA y la del archivo mas reciente del savedata. Con la primera el PC calcula
+// el desfase entre los dos relojes y con el traduce la segunda a su propia hora.
+// Un reloj adelantado o atrasado deja de importar mientras sea constante, que es
+// justo el caso de una consola desajustada.
+//
+// Si la consola no da fechas utiles (algunos sistemas de archivos devuelven 0)
+// se manda 0 y el PC lo trata como "no se sabe" en vez de inventarse un ganador.
+#define PROTO_TIME_UNKNOWN 0
+
+// Margen por debajo del cual los dos lados se consideran empatados: no merece la
+// pena decidir una partida por unos segundos de diferencia.
+#define PROTO_TIME_TIE_S   90
 
 // Estado que devuelve OP_SUMMARY_RES por juego.
 enum {
