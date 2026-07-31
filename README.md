@@ -3,7 +3,7 @@
 Sincroniza las partidas guardadas entre una Switch con CFW y un emulador del PC,
 por wifi, en los dos sentidos.
 
-**Desarrollador: Angelpro09_Dev** · versión 3.3.0
+**Desarrollador: Angelpro09_Dev** · versión 3.4.0
 
 - **`common/`** — el motor: protocolo, red, manifiestos, ajustes. Lo comparten
   la app y el sysmodule, así que los dos se comportan igual.
@@ -316,10 +316,13 @@ nuevo tocando tus saves.
 
 ## Emuladores
 
-| Familia | Cómo encuentra los saves |
-|---------|--------------------------|
-| yuzu y clones (**eden**, suyu, citron, sudachi, torzu…) | La ruta se deriva del title id. Funciona directo. |
-| Ryujinx y forks (Ryubing, Kenji-NX…) | La carpeta usa un id interno; hay que leer la base de datos `imkvdb.arc` del emulador. |
+| Familia | Cómo encuentra los saves | Estado |
+|---------|--------------------------|--------|
+| yuzu y clones (**eden**, suyu, citron, sudachi, torzu…) | La ruta se deriva del title id | ✅ probado (Linux y Windows) |
+| **Ryujinx** y forks (Ryubing, Kenji-NX…) | La carpeta usa un id interno; hay que leer la base de datos `imkvdb.arc` | ✅ probado (Windows) |
+
+El daemon funciona en **Linux** (servicio de systemd) y en **Windows** (app de
+bandeja, `pc/nxsavesync_tray.pyw`).
 
 **No hay lista fija de emuladores**: se detectan por la forma de la carpeta. Todo
 lo que tenga `nand/user/save` dentro es de la familia de yuzu, y todo lo que tenga

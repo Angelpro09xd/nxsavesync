@@ -585,11 +585,21 @@ class Watcher(threading.Thread):
 class Discovery(threading.Thread):
     """Contesta a las sondas UDP para que la consola encuentre este PC sola."""
 
-    def __init__(self, tcp_port: int, emu_name: str):
+    def __init__(self, tcp_port: int, emu_name):
         super().__init__(daemon=True)
         self.tcp_port = tcp_port
-        self.emu_name = emu_name
+        # Puede ser un texto fijo o algo que lo devuelva. Con un texto fijo, si
+        # instalas un emulador despues de arrancar el daemon, la consola seguiria
+        # viendo el nombre viejo hasta reiniciarlo.
+        self._emu_name = emu_name
         self.stop_flag = threading.Event()
+
+    @property
+    def emu_name(self) -> str:
+        try:
+            return self._emu_name() if callable(self._emu_name) else self._emu_name
+        except Exception:
+            return "?"
 
     def run(self) -> None:
         try:
@@ -1291,7 +1301,7 @@ class Runtime:
         if key == "discovery":
             want = value not in ("0", "", "false")
             if want and not self.disc:
-                self.disc = Discovery(self.args.port, self.emu_name)
+                self.disc = Discovery(self.args.port, lambda: self.emu_name)
                 self.disc.start()
             elif not want and self.disc:
                 self.disc.stop_flag.set()
@@ -1381,7 +1391,9 @@ def main(argv=None, stop_event=None, rt_hook=None) -> int:
         rt.watcher.start()
 
     if not args.no_discovery and cfg.get("discovery", True):
-        rt.disc = Discovery(args.port, rt.emu_name)
+        # Se pasa la funcion, no el valor: asi el anuncio refleja los
+        # emuladores de ahora y no los de cuando arranco el daemon.
+        rt.disc = Discovery(args.port, lambda: rt.emu_name)
         rt.disc.start()
 
     where = rt.describe()
