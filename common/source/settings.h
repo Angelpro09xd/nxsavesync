@@ -45,7 +45,6 @@ typedef struct {
     u16 bg_interval;    // segundos entre repasos
     u8  bg_on_exit;     // sincronizar justo al cerrar un juego
     u8  bg_nudge;       // atender los avisos del PC
-    u8  bg_album;       // dejar el aviso como imagen en el Album
 
     game_rule_t    games[SET_MAX_PERGAME];
     size_t         game_count;

@@ -3,7 +3,7 @@
 Sincroniza las partidas guardadas entre una Switch con CFW y un emulador del PC,
 por wifi, en los dos sentidos.
 
-**Desarrollador: Angelpro09_Dev** · versión 4.0.0
+**Desarrollador: Angelpro09_Dev** · versión 4.0.1
 
 - **`common/`** — el motor: protocolo, red, manifiestos, ajustes. Lo comparten
   la app y el sysmodule, así que los dos se comportan igual.
@@ -196,6 +196,23 @@ regla de no tocar un savedata mientras se juega no se salta por nada.
 
 > **Sin ovlloader el `.ovl` no hace nada.** No es un homebrew que se pueda abrir
 > por su cuenta. El resto de NX Save Sync funciona igual sin él.
+
+### Cuánta memoria puede usar un sysmodule
+
+> **1 MB, y ni uno más.** No es un capricho.
+
+La memoria de un sysmodule sale del **pool del sistema, que es compartido con
+los servicios de Horizon**. Pedir de más no falla en tu proceso: **se lo quita a
+los demás**.
+
+Aprendido a base de romperlo: subir el heap a 6 MB para dibujar una imagen de
+aviso dejó a **HID** sin memoria, y la consola arrancaba con un fatal
+`2001-0132` (`LimitReached` del kernel) señalando a `0100000000000013`, que no
+tenía culpa de nada. El proceso que revienta no es el culpable, y eso lo hace
+especialmente difícil de diagnosticar.
+
+Si necesitas mostrar algo en pantalla, el sitio es el **overlay**, no el
+sysmodule.
 
 ### Cómo avisa
 

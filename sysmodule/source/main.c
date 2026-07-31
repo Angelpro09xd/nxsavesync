@@ -35,9 +35,11 @@
 
 // Un sysmodule vive con la memoria que reserva aqui y nada mas. 1 MB da de sobra
 // para manifiestos de unos miles de archivos y los buffers de red reducidos.
-// 6 MB: la imagen del aviso del Album son 1280x720 en RGBA (3,6 MB) y se pide
-// del heap. Con el 1 MB de antes el malloc fallaba siempre y el aviso no salia.
-#define INNER_HEAP_SIZE 0x600000
+// 1 MB y ni uno mas. La memoria de un sysmodule sale del pool del sistema, que
+// es COMPARTIDO: pedir de mas no falla en el propio proceso, se lo quita a los
+// demas. Subirlo a 6 MB para dibujar un aviso dejo a HID sin memoria y la
+// consola arrancaba con un fatal 2001-0132 (LimitReached del kernel).
+#define INNER_HEAP_SIZE 0x100000
 
 #define LOG_PATH   CFG_DIR "/fondo.log"
 #define LOG_OLD    CFG_DIR "/fondo.log.1"
@@ -412,18 +414,6 @@ static void sync_pass(const char *motivo)
     notify_record(kind, g_pulled, g_pushed, g_deleted, g_pending, motivo);
     notify_led(kind);
 
-    // Si algo espera una decision, ademas del LED se deja un aviso visible en
-    // el Album: es el unico sitio donde un proceso de fondo puede dejar algo
-    // que se vea sin abrir la app.
-    if (kind == NOTIFY_ATTENTION && g_set.bg_album) {
-        char l1[96], l2[96];
-        snprintf(l1, sizeof(l1), "%d juego(s) necesitan que decidas", g_pending);
-        snprintf(l2, sizeof(l2), "Sincronizacion: %s", motivo);
-        const char *lineas[] = { l1, l2, NULL };
-
-        if (notify_album("Hay decisiones pendientes", lineas, kind))
-            logf_bg("  aviso dejado en el Album");
-    }
 }
 
 // --------------------------------------------------------------------------
