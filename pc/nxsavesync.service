@@ -1,0 +1,12 @@
+[Unit]
+Description=NXSaveSync - sincroniza los saves de la Switch con el emulador
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/sync/pc/nxsavesyncd.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
