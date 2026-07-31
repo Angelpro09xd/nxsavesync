@@ -19,28 +19,54 @@ die()  { printf '\033[31m!!\033[0m %s\n' "$*"; exit 1; }
 [ -f "$NSP" ] || die "falta $NSP (compila con: make -C sysmodule)"
 
 # --- localizar la SD --------------------------------------------------------
+#
+# El orden importa y el criterio tambien. Antes se cogia cualquier disco montado
+# que tuviera una carpeta /switch dentro, y eso escribio una vez en un NVMe de
+# 954 GB que resulto ser la biblioteca de juegos del PC: tenia un /switch con
+# dumps .nsp y colo. Ahora el MTP manda, y a un disco se le exige que parezca
+# una SD de Switch de verdad.
 
 ROOT=""
+VIA=""
 
-# 1) SD montada como disco normal
-for sd in /media/"$USER"/*/switch /run/media/"$USER"/*/switch; do
-    [ -d "$sd" ] && { ROOT="$(dirname "$sd")"; break; }
+# 1) MTP por gvfs (DBI). Es el caso explicito: si la consola esta conectada,
+#    es ahi donde se quiere escribir.
+for mtp in /run/user/"$(id -u)"/gvfs/mtp:host=*; do
+    [ -d "$mtp" ] || continue
+    for store in "$mtp"/*; do
+        [ -d "$store/switch" ] || continue
+        [ -d "$store/Nintendo" ] || [ -d "$store/atmosphere" ] || continue
+        ROOT="$store"; VIA="MTP"; break 2
+    done
 done
 
-# 2) MTP por gvfs (DBI). El nombre del almacen varia entre versiones, asi que
-#    se busca cualquier carpeta que tenga dentro un /switch.
+# 2) La SD en el lector. Una SD de Switch lleva Nintendo/ en la raiz y va en
+#    FAT32 o exFAT; un disco del PC con una carpeta /switch no cumple ninguna
+#    de las dos cosas.
 if [ -z "$ROOT" ]; then
-    for mtp in /run/user/"$(id -u)"/gvfs/mtp:host=*; do
-        [ -d "$mtp" ] || continue
-        for store in "$mtp"/*; do
-            [ -d "$store/switch" ] && { ROOT="$store"; break 2; }
-        done
+    for sd in /media/"$USER"/*/switch /run/media/"$USER"/*/switch; do
+        [ -d "$sd" ] || continue
+        cand="$(dirname "$sd")"
+
+        [ -d "$cand/Nintendo" ] || {
+            warn "$cand tiene /switch pero no /Nintendo: no es una SD de Switch, la salto"
+            continue
+        }
+
+        fs="$(findmnt -no FSTYPE "$cand" 2>/dev/null || true)"
+        case "$fs" in
+            vfat|exfat|fuseblk|msdos|"") ;;
+            *) warn "$cand esta en $fs; una SD de Switch va en FAT32 o exFAT, la salto"
+               continue ;;
+        esac
+
+        ROOT="$cand"; VIA="lector"; break
     done
 fi
 
 [ -n "$ROOT" ] || die "no encuentro la SD. Conecta la consola con DBI en modo MTP, o mete la SD en el lector."
 
-say "SD encontrada en: $ROOT"
+say "SD encontrada por $VIA: $ROOT"
 
 # --- copiar -----------------------------------------------------------------
 
