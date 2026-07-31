@@ -6,6 +6,7 @@
 #define PROTO_VERSION      3
 #define PROTO_DEFAULT_PORT 7878
 #define PROTO_DISC_PORT    7879   // descubrimiento por UDP
+#define PROTO_NUDGE_PORT   7880   // toque del PC a la consola
 
 // Limite de una trama. Un savedata individual rara vez pasa de unos MB, pero
 // dejamos margen porque algunos juegos guardan capturas dentro del save.
@@ -16,6 +17,12 @@
 
 #define PROTO_DISC_PROBE   "NXSS?"
 #define PROTO_DISC_REPLY   "NXSS!"
+
+// El PC no puede sincronizar por su cuenta: la consola es siempre quien abre la
+// conexion. Lo que si puede es dar un toque por UDP cuando detecta que has
+// jugado en el emulador, para que el sysmodule lo recoja al momento en vez de
+// esperar a su repaso periodico.
+#define PROTO_NUDGE_MSG    "NXSN"
 
 enum {
     OP_HELLO       = 0x01,

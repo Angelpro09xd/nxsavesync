@@ -41,6 +41,12 @@ CHUNK = 256 * 1024
 DISC_PROBE = b"NXSS?"
 DISC_REPLY = b"NXSS!"
 
+# Toque a la consola. El PC no puede sincronizar por su cuenta -la consola es
+# siempre quien abre la conexion-, pero si puede avisar de que hay novedades
+# para que el sysmodule las recoja al momento.
+NUDGE_PORT = 7880
+NUDGE_MSG = b"NXSN"
+
 OP_HELLO, OP_HELLO_OK = 0x01, 0x81
 OP_PLAN_REQ, OP_PLAN_RES = 0x02, 0x82
 OP_PULL_REQ, OP_PULL_RES = 0x03, 0x83
@@ -532,10 +538,11 @@ class Watcher(threading.Thread):
     sincronizar, para que al abrir la app la lista salga al instante.
     """
 
-    def __init__(self, resolver, interval: int = 5):
+    def __init__(self, resolver, interval: int = 5, nudge: bool = True):
         super().__init__(daemon=True)
         self.resolver = resolver
         self.interval = interval
+        self.nudge = nudge
         self.stop_flag = threading.Event()
         self.known: dict[tuple[str, int], dict[str, int]] = {}
         self.names: dict[tuple[str, int], str] = {}
@@ -575,11 +582,31 @@ class Watcher(threading.Thread):
                     log(f"cambio en el emulador: {name} ({len(current)} archivo(s))")
                     with self.lock:
                         self.pending.add(key)
+                    if self.nudge:
+                        send_nudge(name)
 
 
 # --------------------------------------------------------------------------
 # descubrimiento
 # --------------------------------------------------------------------------
+
+
+def send_nudge(motivo: str = "") -> None:
+    """Avisa por broadcast de que hay cambios que recoger.
+
+    Es un aviso, no una orden: la consola decide si sincroniza y cuando. Si no
+    hay ninguna escuchando, el datagrama se pierde y no pasa nada.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.settimeout(1.0)
+        s.sendto(NUDGE_MSG + struct.pack("<I", PROTO_VERSION),
+                 ("255.255.255.255", NUDGE_PORT))
+        s.close()
+        log(f"  aviso enviado a la red{': ' + motivo if motivo else ''}")
+    except OSError as e:
+        log(f"  no se pudo avisar a la red: {e}")
 
 
 class Discovery(threading.Thread):
@@ -1276,6 +1303,11 @@ class Runtime:
                           help="Entre 2 y 60",
                           value=str(self.cfg.get("watch_interval", 5)), options=[]))
 
+        items.append(dict(key="nudge", type=CFG_BOOL,
+                          label="Avisar a la consola de los cambios",
+                          help="Para que los recoja al momento y no en su proximo repaso",
+                          value="1" if self.cfg.get("nudge", True) else "0", options=[]))
+
         items.append(dict(key="discovery", type=CFG_BOOL,
                           label="Dejarse encontrar en la red",
                           help="Responder al broadcast de la consola",
@@ -1327,7 +1359,8 @@ class Runtime:
         if key == "watch":
             want = value not in ("0", "", "false")
             if want and not self.watcher:
-                self.watcher = Watcher(self.resolve, int(self.cfg.get("watch_interval", 5)))
+                self.watcher = Watcher(self.resolve, int(self.cfg.get("watch_interval", 5)),
+                                       nudge=bool(self.cfg.get("nudge", True)))
                 self.watcher.start()
             elif not want and self.watcher:
                 self.watcher.stop_flag.set()
@@ -1341,6 +1374,13 @@ class Runtime:
             if self.watcher:
                 self.watcher.interval = n
             return f"Revision cada {n} s"
+
+        if key == "nudge":
+            want = value not in ("0", "", "false")
+            self.cfg["nudge"] = want
+            if self.watcher:
+                self.watcher.nudge = want
+            return "Se avisara a la consola" if want else "Sin avisos a la consola"
 
         if key == "discovery":
             want = value not in ("0", "", "false")
@@ -1431,7 +1471,8 @@ def main(argv=None, stop_event=None, rt_hook=None) -> int:
         log(f"No se detecto ningun emulador; se usara {rt.fallback}")
 
     if not args.no_watch and cfg.get("watch", True):
-        rt.watcher = Watcher(rt.resolve, cfg.get("watch_interval", 5))
+        rt.watcher = Watcher(rt.resolve, cfg.get("watch_interval", 5),
+                             nudge=cfg.get("nudge", True))
         rt.watcher.start()
 
     if not args.no_discovery and cfg.get("discovery", True):

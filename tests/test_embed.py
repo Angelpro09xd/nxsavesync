@@ -184,6 +184,45 @@ def main():
     t, x = tray.resume_tanda(largos, 99)
     check(f"recorta y resume el resto ({len(x)} car.)", len(x) < 255 and "mas" in x)
 
+    print("\n3d) El PC avisa a la red cuando cambia el emulador")
+    # Es la pieza que permite que, al terminar de jugar en el emulador, la
+    # consola lo recoja al momento en vez de esperar a su repaso periodico.
+    escucha = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    escucha.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    escucha.settimeout(6)
+    escucha.bind(("", daemon.NUDGE_PORT))
+
+    daemon.send_nudge("prueba")
+    try:
+        datos, _ = escucha.recvfrom(64)
+        llego = True
+    except socket.timeout:
+        datos, llego = b"", False
+
+    check("el aviso llega por la red", llego)
+    check("lleva la marca correcta", datos.startswith(daemon.NUDGE_MSG))
+    if llego:
+        (ver,) = struct.unpack_from("<I", datos, len(daemon.NUDGE_MSG))
+        check(f"y la version del protocolo ({ver})", ver == daemon.PROTO_VERSION)
+
+    # El vigilante lo dispara solo al ver un cambio de verdad.
+    vigilante = daemon.Watcher(lambda uid, tid: TMP / "saves" / "vigilado", interval=1)
+    (TMP / "saves/vigilado").mkdir(parents=True, exist_ok=True)
+    vigilante.watch("UID", 0x1234, "Juego vigilado")
+    vigilante.start()
+    time.sleep(2.5)                                    # primera foto
+    (TMP / "saves/vigilado/partida.sav").write_bytes(b"acabo de jugar en el emulador")
+
+    try:
+        datos, _ = escucha.recvfrom(64)
+        aviso_automatico = datos.startswith(daemon.NUDGE_MSG)
+    except socket.timeout:
+        aviso_automatico = False
+    vigilante.stop_flag.set()
+    escucha.close()
+
+    check("y se dispara solo al detectar el cambio", aviso_automatico)
+
     print("\n4) Parada limpia")
     # Sin el tiempo de espera en accept(), esto se quedaria colgado para siempre
     # y la aplicacion no se podria cerrar.

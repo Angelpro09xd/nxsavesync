@@ -3,6 +3,20 @@
 Transporte: **TCP** en el 7878, todo en **little-endian**. La Switch es el cliente,
 el PC el servidor. El descubrimiento va por **UDP** en el 7879.
 
+## Aviso del PC a la consola
+
+El PC **no puede sincronizar por su cuenta**: la consola es siempre quien abre la
+conexión. Lo que sí puede es dar un toque por UDP cuando su vigilante detecta que
+has jugado en el emulador:
+
+```
+broadcast a 255.255.255.255:7880    "NXSN" | u32 version
+```
+
+El sysmodule lo recoge y sincroniza al momento, en vez de esperar a su repaso
+periódico. Es un **aviso, no una orden**: la consola decide si sincroniza y
+cuándo, y si no hay ninguna escuchando el datagrama se pierde sin más.
+
 ## Descubrimiento
 
 La Switch manda un datagrama a `255.255.255.255:7879`:

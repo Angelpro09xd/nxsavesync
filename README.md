@@ -3,7 +3,7 @@
 Sincroniza las partidas guardadas entre una Switch con CFW y un emulador del PC,
 por wifi, en los dos sentidos.
 
-**Desarrollador: Angelpro09_Dev** · versión 3.5.0
+**Desarrollador: Angelpro09_Dev** · versión 3.6.0
 
 - **`common/`** — el motor: protocolo, red, manifiestos, ajustes. Lo comparten
   la app y el sysmodule, así que los dos se comportan igual.
@@ -143,9 +143,15 @@ si abres algo a mitad.
 
 ### Cuándo trabaja
 
-- **Al cerrar un juego**, esperando 3 segundos a que el sistema termine de volcar
-  el savedata. Es el mejor momento: la partida acaba de guardarse.
-- **Cada X minutos** estando en el menú HOME (configurable, 5 por defecto).
+- **Al cerrar un juego en la consola**, esperando 3 segundos a que el sistema
+  termine de volcar el savedata. Es el mejor momento: la partida acaba de
+  guardarse.
+- **Al terminar de jugar en el emulador.** El PC no puede sincronizar por su
+  cuenta —la consola es siempre quien abre la conexión— pero cuando su vigilante
+  detecta el cambio manda un aviso por la red, y el sysmodule lo recoge al
+  momento. Se apaga en *Ajustes → Sincronizar cuando el PC avise*.
+- **Cada X minutos** estando en el menú HOME (configurable, 5 por defecto), como
+  red de seguridad por si algún aviso se pierde.
 
 Si el PC está apagado no pasa nada ni ensucia el log: reintenta a la siguiente.
 

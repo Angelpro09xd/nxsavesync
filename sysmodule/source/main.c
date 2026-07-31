@@ -19,6 +19,11 @@
 #include <stdarg.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "proto.h"
 #include "net.h"
@@ -185,6 +190,65 @@ static bool switch_off(void)
     return stat(OFF_SWITCH, &st) == 0;
 }
 
+// --------------------------------------------------------------------------
+// avisos del PC
+// --------------------------------------------------------------------------
+//
+// El PC no puede sincronizar por su cuenta: la consola es siempre quien abre la
+// conexion. Lo que si hace es mandar un toque por UDP cuando ve que has jugado
+// en el emulador, y aqui se recoge para sincronizar al momento en vez de tener
+// que esperar al repaso periodico.
+
+static int g_nudge_fd = -1;
+
+static void nudge_open(void)
+{
+    g_nudge_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (g_nudge_fd < 0) return;
+
+    // Espera minima: el bucle no puede quedarse aqui parado, tiene que seguir
+    // vigilando si hay un juego abierto.
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 2000 };
+    setsockopt(g_nudge_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(PROTO_NUDGE_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(g_nudge_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(g_nudge_fd);
+        g_nudge_fd = -1;
+        logf_bg("aviso: no se pudo escuchar los toques del PC en el %d", PROTO_NUDGE_PORT);
+        return;
+    }
+
+    logf_bg("escuchando avisos del PC en UDP %d", PROTO_NUDGE_PORT);
+}
+
+// Vacia la cola y dice si llego algun aviso valido.
+static bool nudge_pending(void)
+{
+    if (g_nudge_fd < 0) return false;
+
+    bool got = false;
+    u8 buf[64];
+    size_t mlen = strlen(PROTO_NUDGE_MSG);
+
+    for (;;) {
+        ssize_t k = recv(g_nudge_fd, buf, sizeof(buf), 0);
+        if (k <= 0) break;
+        if ((size_t)k >= mlen + 4 && memcmp(buf, PROTO_NUDGE_MSG, mlen) == 0) {
+            u32 ver = 0;
+            for (int i = 0; i < 4; i++) ver |= (u32)buf[mlen + i] << (8 * i);
+            if (ver == PROTO_VERSION) got = true;
+        }
+    }
+
+    return got;
+}
+
 static bool network_up(void)
 {
     // Sin nifm nos vale con intentar conectar: si no hay red, connect falla y ya.
@@ -343,6 +407,7 @@ int main(int argc, char **argv)
 
     settings_load();
     logf_bg("--- sysmodule arrancado (v%d del protocolo) ---", PROTO_VERSION);
+    nudge_open();
     if (!g_set.bg_enabled)
         logf_bg("desactivado; se activa desde la app o poniendo fondo=1 en config.txt");
 
@@ -356,6 +421,10 @@ int main(int argc, char **argv)
         // Se relee cada vuelta para que lo que cambies en la app se aplique sin
         // reiniciar la consola.
         settings_load();
+
+        // Se vacia siempre la cola, aunque no vayamos a usarlo: si no, se
+        // acumularian avisos viejos y el primer repaso sobraria.
+        bool nudged = nudge_pending() && g_set.bg_nudge;
 
         if (!g_set.bg_enabled || switch_off()) { was_running = game_running(); continue; }
 
@@ -373,7 +442,7 @@ int main(int argc, char **argv)
 
         was_running = false;
 
-        if (!just_closed && !periodic) continue;
+        if (!just_closed && !periodic && !nudged) continue;
         if (!network_up()) continue;
 
         // Un respiro tras cerrar el juego: el sistema aun esta terminando de
@@ -381,7 +450,9 @@ int main(int argc, char **argv)
         if (just_closed) svcSleepThread(3000000000ULL);
         if (game_running()) { was_running = true; continue; }
 
-        sync_pass(just_closed ? "al cerrar el juego" : "repaso periodico");
+        sync_pass(just_closed ? "al cerrar el juego"
+                : nudged     ? "aviso del PC"
+                             : "repaso periodico");
         last_pass = armGetSystemTick();
     }
 

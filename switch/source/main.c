@@ -1175,7 +1175,7 @@ static void input_hosts(const ui_input_t *in)
 // vista de ajustes
 // --------------------------------------------------------------------------
 
-#define SET_ROWS 11
+#define SET_ROWS 12
 #define SET_VISIBLE 7
 
 static int g_set_top;
@@ -1191,6 +1191,7 @@ static void view_settings(const ui_input_t *in)
         "Sonidos",
         "Segundo plano (sysmodule)",
         "Ante un conflicto en segundo plano",
+        "Sincronizar cuando el PC avise",
         "Cada cuanto revisa en segundo plano",
         "Ajustes del PC",
         "Sincronizar todos los juegos ahora",
@@ -1204,7 +1205,8 @@ static void view_settings(const ui_input_t *in)
         "Efectos de la interfaz",
         "Sincroniza sin abrir la app, al cerrar cada juego",
         "Sin nadie delante no se puede preguntar",
-        "Ademas del repaso al cerrar un juego",
+        "Al terminar de jugar en el emulador, sin esperar al repaso",
+        "Ademas del repaso al cerrar un juego y de los avisos",
         "Emuladores, replicado y vigilancia del daemon",
         "",
     };
@@ -1217,9 +1219,10 @@ static void view_settings(const ui_input_t *in)
     snprintf(values[5], 96, "%s", audio_enabled() ? "Si" : "No");
     snprintf(values[6], 96, "%s", g_set.bg_enabled ? "Activado" : "Desactivado");
     snprintf(values[7], 96, "%s", policy_label(g_set.bg_policy));
-    snprintf(values[8], 96, "%u min", g_set.bg_interval / 60);
-    snprintf(values[9], 96, "%s", g_server_name[0] ? g_server_name : "conectar");
-    snprintf(values[10], 96, "%zu juegos", g_games.n);
+    snprintf(values[8], 96, "%s", g_set.bg_nudge ? "Si" : "No");
+    snprintf(values[9], 96, "%u min", g_set.bg_interval / 60);
+    snprintf(values[10], 96, "%s", g_server_name[0] ? g_server_name : "conectar");
+    snprintf(values[11], 96, "%zu juegos", g_games.n);
 
     // La lista ya no cabe entera: se desplaza con la seleccion.
     if (g_row_sel < g_set_top)                    g_set_top = g_row_sel;
@@ -1276,7 +1279,8 @@ static void input_settings(const ui_input_t *in)
                         : g_set.bg_policy == POLICY_SWITCH ? POLICY_PC
                                                            : POLICY_SKIP;
         break;
-    case 8: {
+    case 8: g_set.bg_nudge = !g_set.bg_nudge; break;
+    case 9: {
         int min = g_set.bg_interval / 60;
         min = (in->down & HidNpadButton_Left) ? min - 5 : min + 5;
         if (min < 1)   min = 60;
@@ -1284,8 +1288,8 @@ static void input_settings(const ui_input_t *in)
         g_set.bg_interval = (u16)(min * 60);
         break;
     }
-    case 9: audio_play(SND_SELECT); g_modal = MODAL_PCCFG; pccfg_fetch(); return;
-    case 10:
+    case 10: audio_play(SND_SELECT); g_modal = MODAL_PCCFG; pccfg_fetch(); return;
+    case 11:
         audio_play(SND_SELECT);
         if (g_games.n) run_sync(0, g_games.n);
         return;

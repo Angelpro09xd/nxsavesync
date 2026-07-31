@@ -44,6 +44,7 @@ typedef struct {
     u8  bg_policy;      // POLICY_* que aplica sin nadie delante
     u16 bg_interval;    // segundos entre repasos
     u8  bg_on_exit;     // sincronizar justo al cerrar un juego
+    u8  bg_nudge;       // atender los avisos del PC
 
     game_rule_t    games[SET_MAX_PERGAME];
     size_t         game_count;

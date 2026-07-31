@@ -20,6 +20,7 @@ static void defaults(void)
     g_set.bg_policy     = POLICY_SKIP;
     g_set.bg_interval   = 300;
     g_set.bg_on_exit    = 1;
+    g_set.bg_nudge      = 1;
 }
 
 // --------------------------------------------------------------------------
@@ -52,6 +53,7 @@ void settings_save(void)
         fprintf(f, "fondo_politica=%u\n", g_set.bg_policy);
         fprintf(f, "fondo_intervalo=%u\n", g_set.bg_interval);
         fprintf(f, "fondo_al_salir=%u\n", g_set.bg_on_exit);
+        fprintf(f, "fondo_avisos_pc=%u\n", g_set.bg_nudge);
         fprintf(f, "host_activo=%u\n", (unsigned)g_set.host_sel);
         for (size_t i = 0; i < g_set.host_count; i++)
             fprintf(f, "host=%s|%u|%s|%s\n", g_set.hosts[i].ip, g_set.hosts[i].port,
@@ -133,6 +135,7 @@ void settings_load(void)
         else if (!strcmp(key, "fondo_politica"))       g_set.bg_policy = (u8)atoi(val);
         else if (!strcmp(key, "fondo_intervalo"))      g_set.bg_interval = (u16)atoi(val);
         else if (!strcmp(key, "fondo_al_salir"))       g_set.bg_on_exit = (u8)atoi(val);
+        else if (!strcmp(key, "fondo_avisos_pc"))      g_set.bg_nudge = (u8)atoi(val);
         else if (!strcmp(key, "host_activo"))          g_set.host_sel = (size_t)atoi(val);
         else if (!strcmp(key, "host"))                 parse_host_line(val);
     }
