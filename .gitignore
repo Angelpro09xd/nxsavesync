@@ -1,0 +1,16 @@
+# Artefactos de compilacion
+build/
+*.elf
+*.map
+*.nacp
+*.nro
+*.nso
+*.npdm
+*.nsp
+
+# Python
+__pycache__/
+*.pyc
+
+# Partidas guardadas: son datos personales, nunca van al repositorio
+saves/
