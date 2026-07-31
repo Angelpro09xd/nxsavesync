@@ -25,7 +25,7 @@
 #include "discovery.h"
 #include "notify.h"
 
-#define APP_VERSION "4.2"
+#define APP_VERSION "4.3"
 
 #define LOG_LINES 10
 #define VIEW_MAX  512
@@ -44,6 +44,11 @@ static hostlist_t g_found;
 
 static char g_server_name[128];
 static char g_server_emu[64];
+
+// Los emuladores que hay en el PC. El indice que devuelve el resumen por juego
+// apunta a esta lista.
+static emu_info_t g_emus[SYNC_MAX_EMUS];
+static size_t     g_emus_n;
 
 static nav_t   g_nav   = NAV_GAMES;
 static modal_t g_modal = MODAL_NONE;
@@ -71,10 +76,17 @@ static char   g_progress_title[128];
 static size_t g_progress_done, g_progress_total;
 static bool   g_sync_finished;
 
+// Nombre del emulador donde se jugo por ultima vez, o NULL si no se sabe.
+static const char *emu_name_of(u8 idx)
+{
+    return idx < g_emus_n ? g_emus[idx].name : NULL;
+}
+
 // modelo de vista, rellenado cada fotograma
 static scr_game_t g_vgames[VIEW_MAX];
 static scr_user_t g_vusers[SET_MAX_USERS];
 static scr_host_t g_vhosts[SET_MAX_HOSTS];
+static scr_emu_t  g_vemus[SYNC_MAX_EMUS];
 
 static void pccfg_fetch(void);
 
@@ -140,6 +152,7 @@ static int build_games(void)
         g_vgames[i].excluded  = settings_excluded(g->application_id);
         g_vgames[i].icon      = g->icon;
         g_vgames[i].icon_size = g->icon_size;
+        g_vgames[i].emu       = emu_name_of(g->emu);
     }
     return n;
 }
@@ -154,6 +167,16 @@ static int build_users(void)
         g_vusers[i].shared    = settings_profile_shared(g_users.v[i].uid);
     }
     return n;
+}
+
+static int build_emus(void)
+{
+    for (size_t i = 0; i < g_emus_n; i++) {
+        g_vemus[i].name   = g_emus[i].name;
+        g_vemus[i].path   = g_emus[i].path;
+        g_vemus[i].active = g_emus[i].active;
+    }
+    return (int)g_emus_n;
 }
 
 static int build_hosts(void)
@@ -461,15 +484,22 @@ static void refresh_states(void)
     net_t n;
     if (!connect_now(&n, true)) return;
 
+    sync_emus(&n, g_emus, SYNC_MAX_EMUS, &g_emus_n);
+
     u64 *ids = malloc(g_games.n * sizeof(u64));
     u8  *st  = malloc(g_games.n);
-    if (ids && st) {
+    u8  *em  = malloc(g_games.n);
+    if (ids && st && em) {
         for (size_t i = 0; i < g_games.n; i++) ids[i] = g_games.v[i].application_id;
-        if (sync_summary(&n, current_uid(), ids, g_games.n, st))
-            for (size_t i = 0; i < g_games.n; i++) g_games.v[i].state = st[i];
+        if (sync_summary(&n, current_uid(), ids, g_games.n, st, em))
+            for (size_t i = 0; i < g_games.n; i++) {
+                g_games.v[i].state = st[i];
+                g_games.v[i].emu   = em[i];
+            }
     }
     free(ids);
     free(st);
+    free(em);
     net_close(&n);
 }
 
@@ -740,6 +770,7 @@ static void input_hosts(const ui_input_t *in)
             audio_play(SND_SELECT);
             g_server_emu[0] = '\0';
             g_server_name[0] = '\0';
+            g_emus_n = 0;
             refresh_states();
             toast("PC en uso: %s", g_set.hosts[g_set.host_sel].name);
         }
@@ -1169,7 +1200,8 @@ int main(int argc, char **argv)
             tapped = scr_users(&c, &in, g_vusers, n_users, g_row_sel, (int)g_user_sel);
             break;
         case NAV_HOSTS:
-            tapped = scr_hosts(&c, &in, g_vhosts, n_hosts, g_row_sel, (int)g_set.host_sel);
+            tapped = scr_hosts(&c, &in, g_vhosts, n_hosts, g_row_sel, (int)g_set.host_sel,
+                               g_vemus, build_emus());
             break;
         default: {
             scr_row_t rows[SET_ROWS];

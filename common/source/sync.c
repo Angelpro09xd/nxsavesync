@@ -93,10 +93,45 @@ bool sync_hello(net_t *n, sync_ui_t *ui, char *server_out, size_t server_size,
     return true;
 }
 
+bool sync_emus(net_t *n, emu_info_t *out, size_t max, size_t *out_n)
+{
+    *out_n = 0;
+
+    net_begin(n, OP_EMUS_REQ);
+    if (!net_send(n)) return false;
+
+    u8 op;
+    if (!net_recv(n, &op)) return false;
+    if (op != OP_EMUS_RES) return false;
+
+    u32 count = 0;
+    if (!net_r_u32(n, &count)) return false;
+
+    for (u32 i = 0; i < count; i++) {
+        char name[64] = "", path[256] = "";
+        u8 activo = 1;
+
+        if (!net_r_str(n, name, sizeof(name))) return false;
+        if (!net_r_str(n, path, sizeof(path))) return false;
+        if (!net_r_u8(n, &activo)) return false;
+
+        // Se leen todos aunque no quepan, o el resto de la trama se
+        // desalinearia y la siguiente respuesta saldria basura.
+        if (i >= max) continue;
+
+        snprintf(out[i].name, sizeof(out[i].name), "%s", name);
+        snprintf(out[i].path, sizeof(out[i].path), "%s", path);
+        out[i].active = activo != 0;
+        (*out_n)++;
+    }
+    return true;
+}
+
 bool sync_summary(net_t *n, AccountUid uid, const u64 *title_ids, size_t count,
-                  u8 *out_states)
+                  u8 *out_states, u8 *out_emu)
 {
     for (size_t i = 0; i < count; i++) out_states[i] = SUM_UNKNOWN;
+    if (out_emu) for (size_t i = 0; i < count; i++) out_emu[i] = 0xFF;
 
     net_begin(n, OP_SUMMARY_REQ);
     w_uid(n, uid);
@@ -112,10 +147,16 @@ bool sync_summary(net_t *n, AccountUid uid, const u64 *title_ids, size_t count,
     if (!net_r_u32(n, &got)) return false;
 
     for (u32 i = 0; i < got; i++) {
-        u64 tid; u8 state;
-        if (!net_r_u64(n, &tid) || !net_r_u8(n, &state)) return false;
+        u64 tid; u8 state, emu;
+        if (!net_r_u64(n, &tid) || !net_r_u8(n, &state) || !net_r_u8(n, &emu))
+            return false;
+
         for (size_t k = 0; k < count; k++)
-            if (title_ids[k] == tid) { out_states[k] = state; break; }
+            if (title_ids[k] == tid) {
+                out_states[k] = state;
+                if (out_emu) out_emu[k] = emu;
+                break;
+            }
     }
     return true;
 }

@@ -32,7 +32,7 @@ from pathlib import Path
 
 import emulators
 
-PROTO_VERSION = 4
+PROTO_VERSION = 5
 DEFAULT_PORT = 7878
 DISCOVERY_PORT = 7879
 MAX_FRAME = 64 * 1024 * 1024
@@ -58,6 +58,7 @@ OP_SUMMARY_REQ, OP_SUMMARY_RES = 0x08, 0x88
 OP_DECIDE, OP_DECIDE_RES = 0x09, 0x89
 OP_CFG_GET, OP_CFG_RES = 0x0A, 0x8A
 OP_CFG_SET, OP_CFG_OK = 0x0B, 0x8B
+OP_EMUS_REQ, OP_EMUS_RES = 0x0C, 0x8C   # v5: que emuladores hay en este PC
 OP_ERROR = 0xFF
 
 ACT_PULL, ACT_PUSH, ACT_DEL_LOCAL, ACT_DEL_REMOTE, ACT_CONFLICT = 0, 1, 2, 3, 4
@@ -343,15 +344,25 @@ def state_path(uid: str, title_id: int) -> Path:
     return estado_dir() / uid / f"{title_id:016x}.json"
 
 
-def load_base(uid: str, title_id: int, root: Path) -> tuple[dict[str, int], bool]:
+def load_base(uid: str, title_id: int, root: Path,
+              hermanas: set[str] | None = None) -> tuple[dict[str, int], bool]:
     """Estado en que quedaron los dos lados tras la ultima sync correcta.
 
-    Va atado a la carpeta contra la que se registro. Si el destino cambia (al
-    instalar un emulador, por ejemplo, que mueve la ruta), la base deja de ser
-    valida: describiria archivos de otro sitio. Aplicarla haria que una carpeta
-    nueva con un save recien creado pareciera "el PC ha cambiado" y machacaria
-    la partida buena de la consola. Sin base se trata como primera sync, que
-    ante dos versiones distintas da conflicto y pregunta, que es lo correcto.
+    La base describe *el acuerdo entre la consola y el PC*, no el contenido de
+    una carpeta concreta. La distincion importa en cuanto hay mas de un
+    emulador: `resolve` elige cada vez el que se escribio mas tarde, asi que
+    jugar en Ryujinx despues de haber jugado en eden cambia la carpeta elegida
+    sin que haya cambiado nada del acuerdo.
+
+    Por eso `hermanas` -- las carpetas de este mismo juego en los demas
+    emuladores -- no cuenta como cambio de sitio. Sin esto, alternar de
+    emulador daba "la carpeta ha cambiado" en cada sincronizacion y el juego se
+    quedaba sin sincronizar esperando una decision.
+
+    Un cambio de verdad (el emulador movio su carpeta, o apuntas a otro sitio)
+    si invalida la base: describiria archivos de otro lado, y aplicarla haria
+    que una carpeta nueva pareciera "el PC ha cambiado" y machacaria la partida
+    buena de la consola.
     """
     p = state_path(uid, title_id)
     if not p.is_file():
@@ -368,11 +379,20 @@ def load_base(uid: str, title_id: int, root: Path) -> tuple[dict[str, int], bool
             f"se tratara como primera sync")
         return {}, False
 
-    if data.get("root") != str(root):
-        log(f"  aviso: la carpeta de saves ha cambiado")
-        log(f"           antes: {data.get('root')}")
-        log(f"           ahora: {root}")
-        return {}, True
+    anterior = data.get("root")
+    if anterior != str(root):
+        # Las dos carpetas tienen que ser destinos actuales de este juego. Con
+        # comprobar solo la vieja bastaba para el caso normal, pero daba por
+        # buena una carpeta ajena si `hermanas` venia incompleta.
+        if hermanas and anterior in hermanas and str(root) in hermanas:
+            # Otro emulador del mismo juego: el acuerdo sigue siendo el mismo.
+            log(f"  la comparacion cambia de emulador ({Path(anterior).name} -> "
+                f"{Path(str(root)).name}); la base sigue valiendo")
+        else:
+            log(f"  aviso: la carpeta de saves ha cambiado")
+            log(f"           antes: {anterior}")
+            log(f"           ahora: {root}")
+            return {}, True
 
     try:
         return {k: int(v) for k, v in data["files"].items()}, False
@@ -808,7 +828,8 @@ class Session:
             if root is None or not root.is_dir():
                 state = SUM_NO_DIR
             else:
-                base = load_base_quiet(uid, title_id, root)
+                base = load_base_quiet(uid, title_id, root,
+                                       self.rt.hermanas(uid, title_id))
                 if not base:
                     state = SUM_UNKNOWN
                 else:
@@ -817,9 +838,26 @@ class Session:
                 if self.watcher is not None:
                     self.watcher.watch(uid, title_id, f"{title_id:016X}")
 
-            body += struct.pack("<Q", title_id) + bytes([state])
+            # v5: y en cual de los emuladores se jugo por ultima vez.
+            try:
+                emu = self.rt.last_played(uid, title_id)
+            except Exception:
+                emu = -1
+
+            body += (struct.pack("<Q", title_id) + bytes([state])
+                     + bytes([0xFF if emu < 0 else emu & 0xFF]))
 
         self.conn.send(OP_SUMMARY_RES, body)
+
+    def on_emus_req(self) -> None:
+        """Los emuladores que hay en este PC, para poder verlos en la consola."""
+        emus = self.rt.emus
+        body = struct.pack("<I", len(emus))
+        for e in emus:
+            body += (w_str(e.name) + w_str(str(e.base))
+                     + bytes([0 if e.name in self.rt.disabled else 1]))
+        self.conn.send(OP_EMUS_RES, body)
+        log(f"  lista de emuladores enviada a la consola ({len(emus)})")
 
     def on_plan_req(self) -> None:
         uid = self.conn.r_uid()
@@ -840,7 +878,8 @@ class Session:
 
         root = self.root_for(uid, title_id)
         pc = scan_dir(root)
-        base, root_changed = load_base(uid, title_id, root)
+        base, root_changed = load_base(uid, title_id, root,
+                                       self.rt.hermanas(uid, title_id))
 
         log(f"{name} [{title_id:016X}]  perfil {user_name or uid[:8]}")
         log(f"  switch={len(switch)} archivos  pc={len(pc)}  base={len(base)}")
@@ -1106,6 +1145,7 @@ class Session:
         OP_DECIDE: on_decide,
         OP_CFG_GET: on_cfg_get,
         OP_CFG_SET: on_cfg_set,
+        OP_EMUS_REQ: on_emus_req,
         OP_PLAN_REQ: on_plan_req,
         OP_RESOLVE: on_resolve,
         OP_PULL_REQ: on_pull_req,
@@ -1202,7 +1242,8 @@ def decide_newest(switch_clock: float, switch_newest: float,
     return WINNER_PC, f"se jugo despues en el PC ({detalle})"
 
 
-def load_base_quiet(uid: str, title_id: int, root: Path) -> dict[str, int]:
+def load_base_quiet(uid: str, title_id: int, root: Path,
+                    hermanas: set[str] | None = None) -> dict[str, int]:
     """Como load_base pero sin escribir en el log; para el resumen."""
     p = state_path(uid, title_id)
     if not p.is_file():
@@ -1211,7 +1252,11 @@ def load_base_quiet(uid: str, title_id: int, root: Path) -> dict[str, int]:
         data = json.loads(p.read_text())
     except (json.JSONDecodeError, OSError):
         return {}
-    if not isinstance(data, dict) or data.get("root") != str(root):
+    if not isinstance(data, dict):
+        return {}
+    anterior = data.get("root")
+    if anterior != str(root) and not (hermanas and anterior in hermanas
+                                      and str(root) in hermanas):
         return {}
     try:
         return {k: int(v) for k, v in data.get("files", {}).items()}
@@ -1315,6 +1360,47 @@ class Runtime:
             d.mkdir(parents=True, exist_ok=True)
             out.append((emu.name, d))
         return out
+
+    def hermanas(self, uid: str, title_id: int) -> set[str]:
+        """Las carpetas de este mismo juego en los demas emuladores.
+
+        Sirve para que cambiar de emulador no se confunda con que la carpeta se
+        haya movido de sitio.
+        """
+        try:
+            return {str(p) for _, p in self.targets(uid, title_id)}
+        except Exception:
+            return set()
+
+    def last_played(self, uid: str, title_id: int) -> int:
+        """En que emulador se jugo por ultima vez, como indice de self.emus.
+
+        Devuelve -1 si no hay partida en ninguno. Comparar fechas entre
+        emuladores del mismo PC si es fiable: comparten reloj. El problema de
+        los relojes es solo entre la consola y el PC.
+        """
+        if self.args.dir:
+            return -1
+
+        mejor, mejor_t = -1, None
+        for emu in self.active_emus():
+            try:
+                d = self._emu_for(emu, uid).save_dir(title_id)
+            except Exception:
+                d = None
+            if d is None or not d.is_dir():
+                continue
+
+            files = [p for p in d.rglob("*")
+                     if p.is_file() and p.name not in IGNORED_FILES]
+            if not files:
+                continue
+
+            t = max(p.stat().st_mtime for p in files)
+            if mejor_t is None or t > mejor_t:
+                mejor_t = t
+                mejor = self.emus.index(emu)
+        return mejor
 
     def resolve(self, uid: str, title_id: int) -> Path | None:
         """Carpeta que hace de 'lado PC' para este juego.

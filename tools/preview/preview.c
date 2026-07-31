@@ -78,6 +78,9 @@ static blob_t make_icon(int seed)
 static scr_game_t g_games[NGAMES];
 static scr_user_t g_users[NUSERS];
 static scr_host_t g_hosts[NHOSTS];
+
+#define NEMUS 3
+static scr_emu_t g_emus[NEMUS];
 static blob_t     g_icons[NGAMES + NUSERS];
 
 static const char *GAME_NAMES[NGAMES] = {
@@ -107,6 +110,9 @@ static void data_init(void)
         g_games[i].excluded   = (i == 5);
         g_games[i].icon       = g_icons[i].data;
         g_games[i].icon_size  = g_icons[i].len;
+        // Alternando, para ver que la fila del detalle se rellena bien.
+        g_games[i].emu        = (i % 3 == 0) ? "eden"
+                              : (i % 3 == 1) ? "Ryujinx" : NULL;
     }
 
     const char *unames[NUSERS] = { "Angelpro09", "Invitado", "Hermano" };
@@ -121,6 +127,10 @@ static void data_init(void)
     g_hosts[0] = (scr_host_t){ "angel-LOQ-15ARP9", "192.168.1.232", "eden", 7878 };
     g_hosts[1] = (scr_host_t){ "ANGEL-WIN",        "192.168.1.248", "ryujinx", 7878 };
     g_hosts[2] = (scr_host_t){ "",                 "192.168.1.90",  "", 7878 };
+
+    g_emus[0] = (scr_emu_t){ "eden", "C:\\Users\\Angel\\AppData\\Roaming\\eden", true };
+    g_emus[1] = (scr_emu_t){ "Ryujinx", "C:\\Users\\Angel\\AppData\\Roaming\\Ryujinx", true };
+    g_emus[2] = (scr_emu_t){ "citron", "C:\\Users\\Angel\\AppData\\Roaming\\citron", false };
 }
 
 // --------------------------------------------------------------------------
@@ -204,7 +214,7 @@ static void draw_screen(int screen, const ui_input_t *in)
 
     case 2:
         scr_topbar(&c, "PCs", "Se buscan solos por la red. Tambien puedes anadir uno por IP.");
-        scr_hosts(&c, in, g_hosts, NHOSTS, g_row, 0);
+        scr_hosts(&c, in, g_hosts, NHOSTS, g_row, 0, g_emus, NEMUS);
         scr_hints("A usar este PC   Y buscar en la red   X anadir por IP   L/R menu");
         break;
 

@@ -70,6 +70,7 @@ typedef struct {
     bool  excluded;
     const void *icon;
     size_t icon_size;
+    const char *emu;      // donde se jugo por ultima vez, o NULL
 } scr_game_t;
 
 typedef struct {
@@ -83,6 +84,12 @@ typedef struct {
     const char *name, *ip, *emu;
     unsigned port;
 } scr_host_t;
+
+typedef struct {
+    const char *name;
+    const char *path;
+    bool active;          // false = el usuario lo dejo fuera
+} scr_emu_t;
 
 typedef struct {
     const char *label, *help, *value;
@@ -131,8 +138,11 @@ void scr_games_empty(const scr_ctx_t *c);
 // Listas. Devuelven la fila tocada, o -1.
 int  scr_users(const scr_ctx_t *c, const ui_input_t *in,
                const scr_user_t *u, int n, int sel, int in_use);
+// Debajo de los PCs se listan los emuladores de ese PC, que es donde acaban
+// las partidas de verdad.
 int  scr_hosts(const scr_ctx_t *c, const ui_input_t *in,
-               const scr_host_t *h, int n, int sel, int in_use);
+               const scr_host_t *h, int n, int sel, int in_use,
+               const scr_emu_t *emus, int n_emus);
 int  scr_rows(const scr_ctx_t *c, const ui_input_t *in,
               const scr_row_t *r, int n, int sel, int top, int visible);
 

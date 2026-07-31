@@ -3,7 +3,7 @@
 Sincroniza las partidas guardadas entre una Switch con CFW y un emulador del PC,
 por wifi, en los dos sentidos.
 
-**Desarrollador: Angelpro09_Dev** · versión 4.2
+**Desarrollador: Angelpro09_Dev** · versión 4.3
 
 - **`common/`** — el motor: protocolo, red, manifiestos, ajustes. Lo comparten
   la app y el sysmodule, así que los dos se comportan igual.
@@ -442,16 +442,40 @@ solos con esa regla, sin preguntar.
 
 ## Varios emuladores a la vez
 
-Lo normal es tener dos clones de yuzu (eden, citron…) y además Ryujinx. Todos se
-detectan y todos se mantienen al día:
+Se detectan todos los que tengas y se sincroniza con los activos. En la sección
+**PCs** de la app salen listados, con su ruta y si están dentro o fuera de la
+sincronización.
 
-- **Manda el que jugaste más recientemente.** Entre emuladores del mismo PC sí se
-  pueden comparar fechas (mismo reloj); el problema de los relojes era solo entre
-  la consola y el PC, y ahí se sigue comparando por CRC.
-- **El resultado se replica en el resto.** Sin eso acabarías con la partida al día
-  en uno y vieja en los otros, que es el lío que aparece en cuanto tienes dos.
-- Puedes **desactivar** los que no quieras y **apagar el replicado**, desde la
-  propia consola.
+Cuando hay más de uno, el lado PC de la comparación es **el que se escribió más
+tarde**: es donde jugaste la última vez. Entre emuladores del mismo PC comparar
+fechas sí es fiable, porque comparten reloj; el problema de los relojes es solo
+entre la consola y el PC, y ahí se sigue comparando por CRC.
+
+El panel de detalle de cada juego dice **en cuál se jugó la última vez**, que con
+dos o tres emuladores es la pregunta que uno se hace todo el rato.
+
+Con *Replicar entre emuladores* activado, al terminar se deja la misma partida en
+todos los activos.
+
+### Alternar de emulador no puede parecer una mudanza
+
+La base —el estado en que quedaron los dos lados tras la última sincronización
+correcta— describe **el acuerdo entre la consola y el PC**, no el contenido de
+una carpeta concreta. La distinción parece teórica y no lo es.
+
+Como el lado PC se elige por fecha, jugar en Ryujinx después de haber jugado en
+eden cambia la carpeta comparada sin que haya cambiado nada del acuerdo. La
+primera versión lo tomaba por *«la carpeta de saves ha cambiado de sitio»*,
+tiraba la base y dejaba el juego esperando una decisión. En cada pasada, y sin
+sincronizar nunca.
+
+Ahora, si la carpeta vieja y la nueva son **las dos destinos actuales de ese
+juego**, es solo un cambio de emulador y la base sigue valiendo. Se exigen las
+dos: comprobar solo la vieja daba por buena una carpeta ajena.
+
+Una mudanza de verdad —el emulador movió su carpeta, o apuntas a otro sitio— sí
+invalida la base, porque describiría archivos de otro lado y aplicarla podría
+machacar la partida buena de la consola.
 
 ## Ajustes del PC desde la consola
 

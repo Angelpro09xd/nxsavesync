@@ -485,8 +485,13 @@ static void detail_content(const scr_ctx_t *c, const scr_game_t *g,
 
     detail_row(x, &ty, "Ante un conflicto", policy_label, c->accent);
 
-    if (c->user)
-        detail_row(x, &ty, "Perfil", c->user->name, ui_alpha(COL_TEXT, 215));
+    // Con varios emuladores, saber cual tiene la partida buena es la pregunta
+    // que uno se hace todo el rato.
+    if (g->emu && g->emu[0])
+        detail_row(x, &ty, "Ultima partida en", g->emu, c->accent);
+
+    // El perfil no se repite aqui: ya sale en la capsula de la cabecera, con su
+    // avatar. Repetirlo dejaba el Title ID fuera del panel por falta de sitio.
 
     char tid[32];
     snprintf(tid, sizeof(tid), "%016llX", (unsigned long long)g->title_id);
@@ -623,7 +628,7 @@ void scr_games_empty(const scr_ctx_t *c)
 
 typedef struct { int x, y, w, h, first, count; } list_t;
 
-static list_t list_layout(int row_h, int gap, int n, int sel)
+static list_t list_layout_max(int row_h, int gap, int n, int sel, int fondo)
 {
     list_t L;
     L.x = CONTENT_X;
@@ -631,7 +636,7 @@ static list_t list_layout(int row_h, int gap, int n, int sel)
     L.y = BODY_Y;
     L.h = row_h;
 
-    int visible = (BODY_B - BODY_Y + gap) / (row_h + gap);
+    int visible = (fondo - BODY_Y + gap) / (row_h + gap);
     if (visible < 1) visible = 1;
 
     L.first = 0;
@@ -641,6 +646,11 @@ static list_t list_layout(int row_h, int gap, int n, int sel)
 
     L.count = n - L.first < visible ? n - L.first : visible;
     return L;
+}
+
+static list_t list_layout(int row_h, int gap, int n, int sel)
+{
+    return list_layout_max(row_h, gap, n, sel, BODY_B);
 }
 
 static void list_glass(const list_t *L, int gap, int sel)
@@ -711,18 +721,60 @@ int scr_users(const scr_ctx_t *c, const ui_input_t *in,
     return tapped;
 }
 
+// Los emuladores del PC, debajo de la lista: es donde acaban las partidas de
+// verdad, asi que verlos aqui ahorra entrar en los ajustes del PC.
+static void emu_list(int y, const scr_emu_t *emus, int n)
+{
+    if (n <= 0 || y + 76 > BODY_B) return;
+
+    ui_text_sh(CONTENT_X + 2, y, 14, ui_alpha(COL_DIM, 205),
+               n == 1 ? "Emulador en este PC" : "Emuladores en este PC");
+    y += 26;
+
+    int ancho = (CONTENT_W - 12 * (n - 1)) / n;
+    int h = BODY_B - y;
+    if (h > 92) h = 92;
+    if (h < 56) return;
+
+    ui_glass_begin();
+    for (int i = 0; i < n; i++)
+        ui_glass_add(CONTENT_X + i * (ancho + 12), y, ancho, h, 18, &GLASS_CARD);
+    ui_glass_end();
+
+    for (int i = 0; i < n; i++) {
+        int x = CONTENT_X + i * (ancho + 12);
+        color_t col = emus[i].active ? COL_OK : ui_alpha(COL_DIM, 190);
+
+        if (emus[i].active) ui_glow(x + 24, y + 26, 18, 18, col, 110);
+        ui_circle(x + 24, y + 26, 5, col);
+
+        ui_text_clip_sh(x + 40, y + 16, 18, ancho - 60, COL_TEXT, emus[i].name);
+        ui_text_clip_sh(x + 40, y + 42, 14, ancho - 60, ui_alpha(COL_DIM, 205),
+                        emus[i].active ? "se sincroniza" : "fuera de la sincronizacion");
+        if (h >= 84 && emus[i].path)
+            ui_text_clip(x + 20, y + 66, 11, ancho - 40, ui_alpha(COL_DIM, 150),
+                         emus[i].path);
+
+        ui_debug_box(x, y, ancho, h, "");
+    }
+}
+
 int scr_hosts(const scr_ctx_t *c, const ui_input_t *in,
-              const scr_host_t *h, int n, int sel, int in_use)
+              const scr_host_t *h, int n, int sel, int in_use,
+              const scr_emu_t *emus, int n_emus)
 {
     const int gap = 12;
     if (n == 0) {
         ui_glass(CONTENT_X, BODY_Y, CONTENT_W, 96, 20, &GLASS_CARD);
-        ui_text(CONTENT_X + 32, BODY_Y + 36, 18, ui_alpha(COL_DIM, 200),
-                "Ninguno todavia. Pulsa Y para buscar en la red.");
+        ui_text_sh(CONTENT_X + 32, BODY_Y + 36, 18, ui_alpha(COL_TEXT, 205),
+                   "Ninguno todavia. Pulsa Y para buscar en la red.");
         return -1;
     }
 
-    list_t L = list_layout(80, gap, n, sel);
+    // La lista de PCs se queda con lo justo y el resto es para los emuladores:
+    // sin reservarles sitio, con tres PCs no cabia ninguno.
+    int alto_emus = n_emus > 0 ? 128 : 0;
+    list_t L = list_layout_max(80, gap, n, sel, BODY_B - alto_emus);
     list_glass(&L, gap, sel);
 
     int tapped = -1;
@@ -749,6 +801,8 @@ int scr_hosts(const scr_ctx_t *c, const ui_input_t *in,
         ui_debug_box(L.x, y, L.w, L.h, "");
         if (ui_hit(in, L.x, y, L.w, L.h)) tapped = idx;
     }
+
+    emu_list(L.y + L.count * (L.h + gap) + 6, emus, n_emus);
 
     list_footer(L.count, n, sel);
     return tapped;

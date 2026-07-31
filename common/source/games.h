@@ -10,6 +10,7 @@ typedef struct {
     u8   *icon;         // JPEG del icono; NULL si no se pudo leer
     size_t icon_size;
     u8    state;        // SUM_* que devolvio el PC
+    u8    emu;          // en que emulador se jugo por ultima vez; 0xFF si no se sabe
 } game_t;
 
 typedef struct {

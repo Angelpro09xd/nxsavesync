@@ -20,13 +20,14 @@ OP = dict(HELLO=0x01, HELLO_OK=0x81, PLAN_REQ=0x02, PLAN_RES=0x82,
           PULL_REQ=0x03, PULL_RES=0x83, PUSH=0x04, PUSH_OK=0x84,
           DEL_REMOTE=0x05, DEL_OK=0x85, RESOLVE=0x06, RESOLVE_RES=0x86,
           COMMIT=0x07, COMMIT_OK=0x87, SUMMARY_REQ=0x08, SUMMARY_RES=0x88,
+          EMUS_REQ=0x0C, EMUS_RES=0x8C,
           DECIDE=0x09, DECIDE_RES=0x89, CFG_GET=0x0A, CFG_RES=0x8A,
           CFG_SET=0x0B, CFG_OK=0x8B, ERROR=0xFF)
 
 WARN_NONE, WARN_PC_EMPTY, WARN_SWITCH_EMPTY, WARN_ROOT_CHANGED = 0, 1, 2, 3
 DEC_SWITCH, DEC_PC, DEC_SKIP = 0, 1, 2
 
-VERSION = 4
+VERSION = 5
 MODE_MANUAL, MODE_AUTO = 0, 1
 POLICY_ASK, POLICY_SWITCH, POLICY_PC, POLICY_SKIP, POLICY_NEWEST = 0, 1, 2, 3, 4
 SUM_SYNCED, SUM_PC_CHANGED, SUM_UNKNOWN, SUM_NO_DIR = 0, 1, 2, 3
@@ -409,7 +410,8 @@ def main():
             (n,) = struct.unpack_from("<I", data, 0)
             out = {}
             for i in range(n):
-                tid, st = struct.unpack_from("<QB", data, 4 + i * 9)
+                # v5: tras el estado va el emulador donde se jugo por ultima vez.
+                tid, st, emu = struct.unpack_from("<QBB", data, 4 + i * 10)
                 out[tid] = st
             c.s.close()
             return out
@@ -681,6 +683,35 @@ def main():
         con_nombre = [z for z in zips if "Juego De Prueba" in str(z)]
         check(f"las copias reales ya llevan el nombre ({len(con_nombre)} de {len(zips)})",
               len(con_nombre) > 0)
+
+        # --- cambiar de emulador no puede invalidar la base -----------------
+        #
+        # Regresion de un fallo real: con eden y Ryujinx a la vez, `resolve`
+        # elige cada vez el escrito mas tarde, asi que jugar en uno despues de
+        # haber jugado en el otro cambiaba la carpeta comparada. load_base lo
+        # tomaba por "la carpeta se ha movido", tiraba la base y el juego se
+        # quedaba sin sincronizar esperando una decision, en cada pasada.
+        eden = STATE / "emu-eden" / "0100"
+        ryu  = STATE / "emu-ryujinx" / "0"
+        otro = STATE / "otro-sitio"
+        for d in (eden, ryu, otro):
+            d.mkdir(parents=True, exist_ok=True)
+        (eden / "save.bin").write_bytes(b"partida")
+
+        dmod.save_base(UID_HEX, TITLE, dmod.scan_dir(eden), eden)
+        hermanas = {str(eden), str(ryu)}
+
+        base, movida = dmod.load_base(UID_HEX, TITLE, eden, hermanas)
+        check("la base vale en el emulador de siempre", base and not movida)
+
+        base, movida = dmod.load_base(UID_HEX, TITLE, ryu, hermanas)
+        check("cambiar de emulador NO invalida la base", base and not movida)
+
+        base, movida = dmod.load_base(UID_HEX, TITLE, otro, hermanas)
+        check("una carpeta ajena SI invalida la base", not base and movida)
+
+        base = dmod.load_base_quiet(UID_HEX, TITLE, ryu, hermanas)
+        check("el resumen tambien acepta el emulador hermano", bool(base))
 
         print("\nTODO OK")
     finally:

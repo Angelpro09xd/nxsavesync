@@ -58,5 +58,19 @@ bool sync_title(net_t *n, AccountUid uid, const char *user_name,
                 u8 mode, u8 policy, sync_ui_t *ui, sync_stats_t *st);
 
 // Pide el estado de varios juegos sin sincronizar nada (para pintar la lista).
+// Un emulador del PC, tal y como lo cuenta el daemon.
+#define SYNC_MAX_EMUS 8
+
+typedef struct {
+    char name[64];
+    char path[256];
+    bool active;      // false = el usuario lo dejo fuera de la sincronizacion
+} emu_info_t;
+
+// Lista de emuladores del PC. Devuelve false si el PC no la da.
+bool sync_emus(net_t *n, emu_info_t *out, size_t max, size_t *out_n);
+
+// `out_emu` (opcional) recibe, por juego, en cual de esos emuladores se jugo
+// por ultima vez. 0xFF si no se sabe.
 bool sync_summary(net_t *n, AccountUid uid, const u64 *title_ids, size_t count,
-                  u8 *out_states);
+                  u8 *out_states, u8 *out_emu);
