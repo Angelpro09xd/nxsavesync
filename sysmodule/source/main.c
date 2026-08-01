@@ -82,6 +82,8 @@ static const SocketInitConfig g_sockcfg = {
 static bool g_have_ns;
 static bool g_have_account;
 static bool g_have_pm;
+static bool g_have_time;
+static bool g_have_nifm;
 
 void __appInit(void)
 {
@@ -110,12 +112,27 @@ void __appInit(void)
 
     g_have_pm = R_SUCCEEDED(pmdmntInitialize());
 
+    // Sin esto el sysmodule se queda sin reloj y no se nota hasta que buscas
+    // la causa de algo raro: el registro salia sin horas, `cuando=` valia 0, el
+    // intervalo del repaso periodico no se respetaba (se repasaba cada 5 s) y
+    // no habia manera de enterarse de que la consola habia estado en reposo.
+    // La libreria solo lo inicializa sola cuando no le pisas __appInit.
+    g_have_time = R_SUCCEEDED(timeInitialize());
+
+    // nifm sirve para dos cosas. Saber si hay red de verdad, y sobre todo
+    // pedir que se levante: al despertar del reposo la consola deja el WiFi
+    // apagado hasta que alguien lo pide, y por eso solo se sincronizaba al
+    // abrir la app, que lo pedia por nosotros sin querer.
+    g_have_nifm = R_SUCCEEDED(nifmInitialize(NifmServiceType_System));
+
     socketInitialize(&g_sockcfg);
 }
 
 void __appExit(void)
 {
     socketExit();
+    if (g_have_nifm)    nifmExit();
+    if (g_have_time)    timeExit();
     if (g_have_pm)      pmdmntExit();
     if (g_have_ns)      nsExit();
     if (g_have_account) accountExit();
@@ -266,10 +283,61 @@ static bool nudge_pending(void)
     return got;
 }
 
+// El reloj de pared. No se usa time(): la libreria la resuelve contra un origen
+// que aqui no existe y devolvia siempre 0.
+static time_t wall_now(void)
+{
+    u64 ts = 0;
+    if (R_SUCCEEDED(timeGetCurrentTime(TimeType_LocalSystemClock, &ts)))
+        return (time_t)ts;
+    return 0;
+}
+
+// ¿Tenemos direccion en la red local? Se mira la IP y no el estado de internet
+// a proposito: mucha gente con CFW bloquea los servidores de Nintendo, ahi el
+// test de internet falla para siempre y nosotros solo hablamos con un PC de
+// casa. Con IP nos basta.
+static bool tiene_ip(void)
+{
+    u32 ip = 0;
+    return R_SUCCEEDED(nifmGetCurrentIpAddress(&ip)) && ip != 0;
+}
+
+static NifmRequest g_netreq;
+static bool g_netreq_open;
+
+// Suelta la peticion de red. Se llama en cuanto termina la pasada para no
+// dejar el WiFi encendido a costa de la bateria.
+static void network_release(void)
+{
+    if (!g_netreq_open) return;
+    nifmRequestCancel(&g_netreq);
+    nifmRequestClose(&g_netreq);
+    g_netreq_open = false;
+}
+
+// Se asegura de que hay red, pidiendola si hace falta.
 static bool network_up(void)
 {
     // Sin nifm nos vale con intentar conectar: si no hay red, connect falla y ya.
-    return true;
+    if (!g_have_nifm) return true;
+    if (tiene_ip()) return true;
+
+    if (!g_netreq_open) {
+        if (R_FAILED(nifmCreateRequest(&g_netreq, true))) return false;
+        g_netreq_open = true;
+    }
+    nifmRequestSubmit(&g_netreq);
+
+    // Asociarse a la WiFi al salir del reposo lleva unos segundos. Si en diez
+    // no hay IP, se deja para la vuelta siguiente en vez de bloquear el bucle.
+    for (int i = 0; i < 20; i++) {
+        svcSleepThread(500000000ULL);
+        if (tiene_ip()) return true;
+    }
+
+    network_release();
+    return false;
 }
 
 // --------------------------------------------------------------------------
@@ -441,7 +509,14 @@ int main(int argc, char **argv)
     (void)argc; (void)argv;
 
     settings_load();
-    logf_bg("--- sysmodule arrancado (v%d del protocolo) ---", PROTO_VERSION);
+    // La fecha de compilacion va aqui a proposito: dos versiones distintas
+    // pueden hablar el mismo protocolo, y sin esto no habia forma de saber
+    // desde el registro cual de las dos se estaba ejecutando de verdad.
+    logf_bg("--- sysmodule arrancado (v%d del protocolo, %s %s) ---",
+            PROTO_VERSION, __DATE__, __TIME__);
+    logf_bg("reloj: %s / red: %s",
+            g_have_time ? "si" : "NO",
+            g_have_nifm ? "si" : "no (a ciegas)");
     nudge_open();
     if (!g_set.bg_enabled)
         logf_bg("desactivado; se activa desde la app o poniendo fondo=1 en config.txt");
@@ -468,8 +543,14 @@ int main(int argc, char **argv)
         // Si entre dos vueltas ha pasado mucho mas de lo que dormimos, es que
         // la consola estuvo en reposo. Al volver hay que repasar: mientras
         // dormia han podido cambiar cosas en el PC.
-        time_t wall = time(NULL);
-        if (last_loop && wall - last_loop > 60) {
+        // Si por lo que fuera nos quedamos sin reloj, se tira del contador
+        // monotonico: al menos se respeta el intervalo. El reposo no se notara,
+        // pero es mejor que repasar cada 5 s.
+        time_t wall = wall_now();
+        bool hay_reloj = wall != 0;
+        if (!hay_reloj) wall = (time_t)(armTicksToNs(armGetSystemTick()) / 1000000000ULL);
+
+        if (hay_reloj && last_loop && wall - last_loop > 60) {
             desperto = true;
             logf_bg("la consola estuvo en reposo %lld s", (long long)(wall - last_loop));
         }
@@ -513,8 +594,9 @@ int main(int argc, char **argv)
                 : desperto    ? "al salir del reposo"
                 : nudged      ? "aviso del PC"
                               : "repaso periodico");
+        network_release();
         desperto  = false;
-        last_pass = time(NULL);
+        last_pass = hay_reloj ? wall_now() : wall;
     }
 
     return 0;
