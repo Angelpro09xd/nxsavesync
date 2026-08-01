@@ -928,11 +928,16 @@ class Session:
 
             apunta_estado(title_id, state)
 
+            # 0xFE quiere decir "la consola". Se saca de la ficha, que es donde
+            # quedo apuntado al terminar la ultima sincronizacion.
+            if lee_ficha(title_id).get("lugar") == "Consola":
+                emu = -2
+
             # v7: y si ya tenemos su caratula, para no pedirla otra vez.
             tiene = 1 if icono_path(title_id).is_file() else 0
 
             body += (struct.pack("<Q", title_id) + bytes([state])
-                     + bytes([0xFF if emu < 0 else emu & 0xFF])
+                     + bytes([0xFE if emu == -2 else (0xFF if emu < 0 else emu & 0xFF)])
                      + bytes([tiene]))
 
         self.conn.send(OP_SUMMARY_RES, body)
@@ -1051,7 +1056,8 @@ class Session:
             log(f"  ultimo jugado: {motivo_reciente}")
 
         self.titles[(uid, title_id)] = {
-            "name": name, "switch": switch, "pc": pc, "plan": [], "root": root
+            "name": name, "switch": switch, "pc": pc, "plan": [], "root": root,
+            "switch_clock": switch_clock, "switch_newest": switch_newest,
         }
         if self.watcher is not None:
             self.watcher.watch(uid, title_id, name)
@@ -1263,10 +1269,29 @@ class Session:
         except Exception:
             emu_idx = -1
 
+        emu_nombre = (self.rt.emus[emu_idx].name
+                      if 0 <= emu_idx < len(self.rt.emus) else "")
+
+        # Donde se jugo por ultima vez, contando tambien la consola. Se compara
+        # la fecha del save mas reciente de cada lado, corrigiendo el desfase de
+        # relojes igual que hace "gana el ultimo jugado": la consola y el PC no
+        # tienen por que estar en hora.
+        lugar = emu_nombre
+        try:
+            sc = ctx.get("switch_clock") or 0
+            sn = ctx.get("switch_newest") or 0
+            pn = newest_mtime(root)
+            if sc and sn:
+                desfase = time.time() - sc
+                if (sn + desfase) - pn > TIE_SECONDS:
+                    lugar = "Consola"
+        except Exception:
+            pass
+
         apunta_ficha(title_id, ctx.get("name", ""), uid,
                      archivos=len(manifest),
-                     emulador=(self.rt.emus[emu_idx].name
-                               if 0 <= emu_idx < len(self.rt.emus) else ""),
+                     emulador=emu_nombre,
+                     lugar=lugar,
                      carpeta=str(root),
                      **cuenta)
 

@@ -48,9 +48,10 @@ body {
      que refractar y los bordes se convertian en un grumo gris. */
   /* Degradados de reserva, por si todavia no hay caratulas que ensenar. */
   background:
-    radial-gradient(1300px 900px at 10% -8%,  rgba(74,216,230,.20), transparent 62%),
-    radial-gradient(1100px 800px at 92% 8%,   rgba(150,108,255,.17), transparent 64%),
-    radial-gradient(1000px 900px at 72% 98%,  rgba(64,224,182,.14), transparent 62%),
+    radial-gradient(1300px 900px at 10% -8%,  rgba(74,216,230,.34), transparent 62%),
+    radial-gradient(1100px 800px at 92% 8%,   rgba(150,108,255,.30), transparent 64%),
+    radial-gradient(1000px 900px at 72% 98%,  rgba(64,224,182,.26), transparent 62%),
+    radial-gradient(900px 700px at 18% 88%,   rgba(255,150,90,.18), transparent 60%),
     var(--fondo);
   background-attachment:fixed;
   font-family:var(--sans); font-size:15px; line-height:1.55;
@@ -61,30 +62,29 @@ body {
    Es lo mismo que hace la consola con el icono del juego elegido, y tiene una
    ventaja sobre un degradado: una imagen se VE. Los degradados sutiles se
    perdian segun la pantalla y el navegador. */
-#tapiz {
-  position:fixed; inset:-18%; z-index:0; pointer-events:none;
-  filter:blur(115px) saturate(112%); opacity:.34;
-}
+/* Las caratulas del fondo se pintan UNA vez dentro del lienzo, no con filter
+   sobre imagenes vivas: un blur de 115 px sobre cuatro <img> fijas obliga al
+   navegador a recomponerlo en cada fotograma, y eso era lo que hacia que el
+   scroll fuera a tirones. */
 /* El velo. Es exactamente lo que hace la consola despues de pintar el arte: el
    color hay que verlo, pero el fondo no puede competir con lo que se lee
    encima. Sin esto las caratulas se comen el texto. */
 body::before {
   content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
   background:
-    radial-gradient(120% 90% at 50% 40%, rgba(5,7,12,.42), rgba(5,7,12,.80) 78%),
-    rgba(5,7,12,.42);
+    radial-gradient(120% 95% at 50% 42%, rgba(5,7,12,.10), rgba(5,7,12,.72) 82%),
+    rgba(5,7,12,.20);
 }
-#tapiz img { position:absolute; width:48%; aspect-ratio:1; object-fit:cover;
-             border-radius:50%; }
-#fondo { position:fixed; inset:0; z-index:0; opacity:.5; }
+#fondo { position:fixed; inset:0; z-index:0; }
 .pagina { position:relative; z-index:2; max-width:1080px; margin:0 auto; padding:0 22px; }
 
 /* ---------- el vidrio ---------- */
 .v {
   position:relative; isolation:isolate;
   background:var(--vidrio);
-  backdrop-filter:blur(26px) saturate(150%);
-  -webkit-backdrop-filter:blur(26px) saturate(150%);
+  /* 18 px basta y cuesta bastante menos que 26 al desplazarse. */
+  backdrop-filter:blur(18px) saturate(150%);
+  -webkit-backdrop-filter:blur(18px) saturate(150%);
   border:1px solid var(--canto);
   /* Como en la consola: un filo claro arriba y sombra debajo. Nada mas. */
   box-shadow:
@@ -154,6 +154,9 @@ section { margin-bottom:38px; scroll-margin-top:96px; }
 .titulo em { font-style:normal; font-size:12.5px; color:var(--tenue);
              opacity:.75; margin-left:auto; }
 .titulo .btn { padding:6px 15px; font-size:12.5px; }
+.vista { display:flex; align-items:center; gap:10px; }
+.vista input[type=range] { width:110px; accent-color:var(--acento); cursor:pointer; }
+@media (max-width:720px) { .vista input[type=range] { display:none; } }
 
 /* Lista agrupada: un solo bloque de vidrio con separadores dentro, en vez de
    una tarjeta por fila. Con muchas filas pesa mucho menos a la vista. */
@@ -171,11 +174,18 @@ section { margin-bottom:38px; scroll-margin-top:96px; }
 .fila .v2 { flex:0 0 auto; color:var(--tenue); font-size:13.5px; text-align:right; }
 
 /* ---------- carrusel de juegos ---------- */
-.tira { display:flex; gap:14px; overflow-x:auto; padding:4px 6px 16px;
-        scroll-snap-type:x mandatory; scrollbar-width:none; }
-.tira::-webkit-scrollbar { display:none; }
+/* Rejilla, no carrusel: con once juegos, media lista quedaba fuera de la
+   pantalla y habia que arrastrar para verla. */
+.tira { display:grid; gap:16px; padding:4px 6px 6px;
+        grid-template-columns:repeat(auto-fill,minmax(var(--tam,150px),1fr)); }
+.tira.lista { grid-template-columns:1fr; gap:10px; }
+.tira.lista .juego { display:flex; align-items:center; gap:16px;
+  padding:10px 14px; border-radius:var(--r-m);
+  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09); }
+.tira.lista .marco { width:64px; flex:0 0 64px; }
+.tira.lista p { margin:0; font-size:14.5px; -webkit-line-clamp:1; }
 .juego {
-  flex:0 0 148px; scroll-snap-align:start; cursor:pointer;
+  cursor:pointer;
   border:0; padding:0; background:none; text-align:left; color:inherit; font:inherit;
   transition:transform .25s cubic-bezier(.2,.8,.3,1);
 }
@@ -331,7 +341,6 @@ body.sin-animacion *, body.sin-animacion *::before, body.sin-animacion *::after 
      eso es lo que hace que el borde parezca tener grosor. -->
 <!-- El desenfoque va como en la consola: sin filtros raros. -->
 
-<div id="tapiz" aria-hidden="true"></div>
 <canvas id="fondo" aria-hidden="true"></canvas>
 
 <div class="pagina">
@@ -373,6 +382,11 @@ body.sin-animacion *, body.sin-animacion *::before, body.sin-animacion *::after 
     <div class="titulo">
       <h2>Juegos</h2>
       <button class="btn pri" id="b-sync">Sincronizar ahora</button>
+      <div class="vista">
+        <button class="btn" id="b-vista">Rejilla</button>
+        <input type="range" id="b-tam" min="110" max="230" step="10" value="150"
+               title="Tamaño de las carátulas" aria-label="Tamaño de las carátulas">
+      </div>
       <em id="j-cuenta"></em>
     </div>
     <div class="tira" id="tira"></div>
@@ -537,18 +551,10 @@ function pintaJuegos(l) {
     return;
   }
 
-  // El fondo: cuatro caratulas repartidas por las esquinas. Se hace una vez y
-  // solo si cambian los juegos, que es lo que controla la firma de arriba.
-  const tapiz = $("#tapiz");
-  tapiz.innerHTML = "";
-  const conPortada = l.filter((j) => j.caratula).slice(0, 4);
-  const sitios = [["-8%","-10%"], ["58%","-6%"], ["-6%","56%"], ["56%","58%"]];
-  conPortada.forEach((j, k) => {
-    const im = document.createElement("img");
-    im.src = "/caratula/" + j.title_id + ".jpg?t=" + T;
-    im.style.left = sitios[k][0]; im.style.top = sitios[k][1];
-    tapiz.appendChild(im);
-  });
+  // Las caratulas del fondo, al lienzo. Solo cuando cambian los juegos.
+  if (window.pintaTapiz)
+    window.pintaTapiz(l.filter((j) => j.caratula).slice(0, 4)
+                       .map((j) => "/caratula/" + j.title_id + ".jpg?t=" + T));
 
   l.forEach((j, i) => {
     const b = document.createElement("button");
@@ -588,11 +594,26 @@ function abreHoja(j) {
   par("Última vez", j.cuando_txt);
   par("Sincronizado", j.veces ? j.veces + (j.veces === 1 ? " vez" : " veces") : "");
   par("Archivos", j.archivos);
-  par("Emulador", j.emulador);
+  par("Última partida en", j.lugar || j.emulador);
   par("Bajados en total", j.total_bajados);
   par("Subidos en total", j.total_subidos);
   par("Borrados en total", j.total_borrados);
   par("Carpeta", j.carpeta);
+
+  // Sincronizar este juego. Como el PC no puede empezar la conexion, lo que
+  // hace es avisar a la consola; el mensaje lo dice sin adornos.
+  const acc = document.createElement("div");
+  acc.className = "acciones"; acc.style.padding = "20px 0 0";
+  const b = document.createElement("button");
+  b.className = "btn pri"; b.textContent = "Sincronizar este juego";
+  b.addEventListener("click", async () => {
+    b.disabled = true; b.textContent = "Avisando…";
+    const r = await pide("/api/accion", { accion: "sincronizar" });
+    aviso(r.msg || "Aviso enviado");
+    b.disabled = false; b.textContent = "Sincronizar este juego";
+  });
+  acc.appendChild(b);
+  h.appendChild(acc);
 
   h.classList.add("on");
   $("#velo").classList.add("on");
@@ -817,6 +838,28 @@ document.querySelectorAll("section[id]").forEach((s) => vigia.observe(s));
 addEventListener("load",   () => mueveTab(document.querySelector("nav.tabs a.on")));
 addEventListener("resize", () => mueveTab(document.querySelector("nav.tabs a.on")));
 
+// Rejilla o lista, y el tamano de las caratulas. Se recuerdan.
+const b_vista = $("#b-vista"), b_tam = $("#b-tam"), tira = $("#tira");
+function pintaVista() {
+  const lista = localStorage.getItem("nxss-vista") === "lista";
+  tira.classList.toggle("lista", lista);
+  b_vista.textContent = lista ? "Lista" : "Rejilla";
+  b_tam.disabled = lista;
+  b_tam.style.opacity = lista ? .35 : 1;
+}
+b_vista.addEventListener("click", () => {
+  localStorage.setItem("nxss-vista",
+    localStorage.getItem("nxss-vista") === "lista" ? "rejilla" : "lista");
+  pintaVista();
+});
+b_tam.value = localStorage.getItem("nxss-tam") || 150;
+function pintaTam() {
+  tira.style.setProperty("--tam", b_tam.value + "px");
+  localStorage.setItem("nxss-tam", b_tam.value);
+}
+b_tam.addEventListener("input", pintaTam);
+pintaVista(); pintaTam();
+
 // El interruptor manda sobre el ajuste del sistema: si Windows trae "reducir
 // movimiento" puesto pero aqui las quieres, se quedan.
 const b_anim = $("#b-anim");
@@ -838,7 +881,7 @@ setInterval(() => { carga(); cargaJuegos(); }, 5000);
 /* ---------- el fondo ---------- */
 (function () {
   const c = $("#fondo");
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const quieto = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const ctx = c.getContext("2d");
   let w = 0, h = 0;
   const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -850,16 +893,52 @@ setInterval(() => { carga(); cargaJuegos(); }, 5000);
   }
   addEventListener("resize", medir); medir();
 
+  // Las caratulas del fondo. Se pintan una sola vez, ya desenfocadas, sobre un
+  // lienzo aparte que luego solo se copia. Asi el coste no vuelve por cada
+  // fotograma de scroll.
+  let tapiz = null;
+  window.pintaTapiz = function (urls) {
+    if (!urls.length) { tapiz = null; return; }
+    const t = document.createElement("canvas");
+    t.width = 640; t.height = 400;
+    const tc = t.getContext("2d");
+    let quedan = urls.length;
+
+    const sitios = [[-40,-60],[330,-40],[-30,190],[320,200]];
+    urls.slice(0, 4).forEach((u, i) => {
+      const im = new Image();
+      im.onload = im.onerror = () => {
+        if (im.width) {
+          tc.filter = "blur(38px) saturate(120%)";
+          tc.globalAlpha = .72;
+          tc.drawImage(im, sitios[i][0], sitios[i][1], 360, 320);
+        }
+        if (--quedan === 0) tapiz = t;
+      };
+      im.src = u;
+    });
+  };
+
   const base = [74, 216, 230];
   const m = [
-    { x:.20, y:.14, sx:.043, sy:.031, p:0,   a:.16, c:base },
-    { x:.80, y:.60, sx:.027, sy:.049, p:2.1, a:.13, c:[base[2],base[0],base[1]] },
-    { x:.50, y:.92, sx:.038, sy:.024, p:4.3, a:.10, c:[base[1],base[2],base[0]] },
+    { x:.20, y:.14, sx:.043, sy:.031, p:0,   a:.26, c:base },
+    { x:.80, y:.60, sx:.027, sy:.049, p:2.1, a:.21, c:[base[2],base[0],base[1]] },
+    { x:.50, y:.92, sx:.038, sy:.024, p:4.3, a:.16, c:[base[1],base[2],base[0]] },
   ];
 
+  // Con "reducir movimiento" se pinta un fotograma y se para: el color tiene
+  // que estar igualmente, solo que sin moverse.
   requestAnimationFrame(function frame(t) {
     t /= 1000;
     ctx.clearRect(0, 0, w, h);
+
+    // Primero las caratulas ya desenfocadas, estiradas a la pantalla.
+    if (tapiz) {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(tapiz, -w * .08, -h * .08, w * 1.16, h * 1.16);
+      ctx.globalAlpha = 1;
+    }
+
     for (const b of m) {
       const cx = (b.x + Math.sin(t * b.sx + b.p) * .11) * w;
       const cy = (b.y + Math.cos(t * b.sy + b.p) * .09) * h;
@@ -871,7 +950,8 @@ setInterval(() => { carga(); cargaJuegos(); }, 5000);
       ctx.fillStyle = g;
       ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
     }
-    requestAnimationFrame(frame);
+    if (!quieto) requestAnimationFrame(frame);
+    else setTimeout(() => requestAnimationFrame(frame), 1500);  // por si llegan caratulas
   });
 })();
 </script>

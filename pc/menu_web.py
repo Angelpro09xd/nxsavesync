@@ -301,6 +301,11 @@ class MenuWeb:
             tid = d.get("title_id") or f.stem
             d["caratula"] = (base / f"{tid}.jpg").is_file()
 
+            # "lugar" es donde se jugo por ultima vez y puede ser la propia
+            # consola; "emulador" es solo la carpeta del PC contra la que se
+            # comparo. Son cosas distintas y la util es la primera.
+            d.setdefault("lugar", d.get("emulador", ""))
+
             if isinstance(d.get("cuando"), (int, float)):
                 d["cuando_txt"] = datetime.fromtimestamp(
                     d["cuando"]).strftime("%d/%m/%Y %H:%M")

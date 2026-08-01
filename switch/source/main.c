@@ -25,7 +25,7 @@
 #include "discovery.h"
 #include "notify.h"
 
-#define APP_VERSION "4.9"
+#define APP_VERSION "5.0"
 
 #define LOG_LINES 10
 #define VIEW_MAX  512
@@ -76,9 +76,15 @@ static char   g_progress_title[128];
 static size_t g_progress_done, g_progress_total;
 static bool   g_sync_finished;
 
-// Nombre del emulador donde se jugo por ultima vez, o NULL si no se sabe.
+// Donde se jugo por ultima vez, o NULL si no se sabe.
+//
+// 0xFE es la propia consola: el PC lo deduce comparando la fecha del save mas
+// reciente de cada lado, corrigiendo el desfase de relojes. Que salga "Consola"
+// y no un emulador es informacion util: quiere decir que la partida buena esta
+// aqui y todavia no ha viajado.
 static const char *emu_name_of(u8 idx)
 {
+    if (idx == 0xFE) return "Consola";
     return idx < g_emus_n ? g_emus[idx].name : NULL;
 }
 
