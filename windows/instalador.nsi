@@ -14,7 +14,7 @@ SetCompressor /SOLID lzma
 !include "FileFunc.nsh"
 
 !define NOMBRE   "NX Save Sync"
-!define VERSION  "4.6"
+!define VERSION  "4.7"
 !define AUTOR    "Angelpro09_Dev"
 !define CLAVE    "Software\Microsoft\Windows\CurrentVersion\Uninstall\NXSaveSync"
 
@@ -25,7 +25,7 @@ InstallDirRegKey HKCU "Software\NXSaveSync" "InstallDir"
 RequestExecutionLevel user
 ShowInstDetails show
 
-VIProductVersion "4.6.0.0"
+VIProductVersion "4.7.0.0"
 VIAddVersionKey "ProductName"     "${NOMBRE}"
 VIAddVersionKey "FileDescription" "Instalador de ${NOMBRE}"
 VIAddVersionKey "FileVersion"     "${VERSION}"

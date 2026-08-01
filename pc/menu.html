@@ -22,8 +22,8 @@
 
 :root {
   --fondo:#05070C;
-  --vidrio:rgba(255,255,255,.065);
-  --canto:rgba(255,255,255,.14);
+  --vidrio:rgba(255,255,255,.11);
+  --canto:rgba(255,255,255,.22);
   --tinta:#F5F8FC;
   --tenue:#98A6BA;
   --acento:#4AD8E6;
@@ -40,7 +40,19 @@
 * { box-sizing:border-box; }
 html { scroll-behavior:smooth; }
 body {
-  margin:0; background:var(--fondo); color:var(--tinta);
+  margin:0; color:var(--tinta);
+
+  /* El color va en CSS, no en el lienzo. El lienzo solo anade movimiento
+     encima, y se apaga si el sistema pide menos animacion -- que es justo lo
+     que pasaba: sin el, el fondo quedaba negro puro, el cristal no tenia nada
+     que refractar y los bordes se convertian en un grumo gris. */
+  background:
+    radial-gradient(1300px 900px at 10% -8%,  rgba(74,216,230,.30), transparent 62%),
+    radial-gradient(1100px 800px at 92% 8%,   rgba(150,108,255,.26), transparent 64%),
+    radial-gradient(1000px 900px at 72% 98%,  rgba(64,224,182,.22), transparent 62%),
+    radial-gradient(900px 700px at 16% 86%,   rgba(255,138,92,.15), transparent 60%),
+    var(--fondo);
+  background-attachment:fixed;
   font-family:var(--sans); font-size:15px; line-height:1.55;
   -webkit-font-smoothing:antialiased; overflow-x:hidden;
   padding-bottom:120px;
@@ -52,15 +64,16 @@ body {
 .v {
   position:relative; isolation:isolate;
   background:var(--vidrio);
-  backdrop-filter:blur(30px) saturate(200%) brightness(1.06);
-  -webkit-backdrop-filter:blur(30px) saturate(200%) brightness(1.06);
+  backdrop-filter:blur(36px) saturate(190%) brightness(1.18);
+  -webkit-backdrop-filter:blur(36px) saturate(190%) brightness(1.18);
   border:1px solid var(--canto);
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.30),
-    inset 0 -1px 0 rgba(255,255,255,.05),
-    inset 0 24px 40px -34px rgba(255,255,255,.35),
-    0 10px 26px -8px rgba(0,0,0,.55),
-    0 34px 70px -24px rgba(0,0,0,.5);
+    inset 0 1px 0 rgba(255,255,255,.45),        /* filo iluminado, nitido */
+    inset 0 0 0 1px rgba(255,255,255,.07),
+    inset 0 -1px 0 rgba(255,255,255,.08),
+    inset 0 30px 46px -40px rgba(255,255,255,.45),
+    0 8px 24px -10px rgba(0,0,0,.5),
+    0 30px 64px -28px rgba(0,0,0,.45);
 }
 /* La refraccion va SOLO en el canto. Aplicada a todo el panel, lo de detras
    ondula por el centro y parece un cristal roto en vez de uno bueno. La
@@ -68,7 +81,7 @@ body {
 .v::after {
   content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
   backdrop-filter:blur(1px) url(#refraccion);
-  padding:18px;
+  padding:14px;
   -webkit-mask:linear-gradient(#000,#000) content-box, linear-gradient(#000,#000);
   -webkit-mask-composite:xor; mask-composite:exclude;
   z-index:-1;
@@ -277,10 +290,10 @@ footer svg { width:15px; height:15px; fill:currentColor; }
      eso es lo que hace que el borde parezca tener grosor. -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <filter id="refraccion" x="-20%" y="-20%" width="140%" height="140%">
-    <feTurbulence type="fractalNoise" baseFrequency="0.012 0.016"
+    <feTurbulence type="fractalNoise" baseFrequency="0.009 0.011"
                   numOctaves="2" seed="9" result="ruido"/>
-    <feGaussianBlur in="ruido" stdDeviation="2.4" result="suave"/>
-    <feDisplacementMap in="SourceGraphic" in2="suave" scale="26"
+    <feGaussianBlur in="ruido" stdDeviation="3.6" result="suave"/>
+    <feDisplacementMap in="SourceGraphic" in2="suave" scale="9"
                        xChannelSelector="R" yChannelSelector="G"/>
   </filter>
 </svg>
@@ -722,9 +735,9 @@ setInterval(() => { carga(); cargaJuegos(); }, 5000);
 
   const base = [74, 216, 230];
   const m = [
-    { x:.20, y:.14, sx:.043, sy:.031, p:0,   a:.34, c:base },
-    { x:.80, y:.60, sx:.027, sy:.049, p:2.1, a:.26, c:[base[2],base[0],base[1]] },
-    { x:.50, y:.92, sx:.038, sy:.024, p:4.3, a:.19, c:[base[1],base[2],base[0]] },
+    { x:.20, y:.14, sx:.043, sy:.031, p:0,   a:.16, c:base },
+    { x:.80, y:.60, sx:.027, sy:.049, p:2.1, a:.13, c:[base[2],base[0],base[1]] },
+    { x:.50, y:.92, sx:.038, sy:.024, p:4.3, a:.10, c:[base[1],base[2],base[0]] },
   ];
 
   requestAnimationFrame(function frame(t) {
