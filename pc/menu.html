@@ -132,7 +132,7 @@ header small { font-size:11.5px; color:var(--tenue); }
 .hero .aro circle { fill:none; stroke-width:9; stroke-linecap:round; }
 .hero .aro .pista { stroke:rgba(255,255,255,.09); }
 .hero .aro .val { stroke:var(--ok);
-  transition:stroke-dashoffset .9s cubic-bezier(.2,.8,.3,1), stroke .4s; }
+  transition:stroke-dashoffset 1.1s cubic-bezier(.2,.8,.3,1) .25s, stroke .4s; }
 .hero .aro i {
   position:absolute; inset:0; display:grid; place-items:center; font-style:normal;
   font-size:27px; font-weight:650; font-variant-numeric:tabular-nums;
@@ -182,7 +182,14 @@ section { margin-bottom:38px; scroll-margin-top:96px; }
 .juego:hover { transform:translateY(-6px); }
 .juego:active { transform:translateY(-2px) scale(.98); }
 .juego .marco { position:relative; border-radius:var(--r-m); overflow:hidden;
-  box-shadow:0 10px 26px -6px rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.10); }
+  box-shadow:0 10px 26px -6px rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.10);
+  transition:box-shadow .28s; }
+.juego:hover .marco { box-shadow:0 20px 42px -10px rgba(0,0,0,.7); }
+.juego img { transition:transform .5s cubic-bezier(.2,.8,.3,1); }
+.juego:hover img { transform:scale(1.08); }
+/* El punto de estado late despacio cuando algo espera. */
+.juego .pto.espera { animation:latido 2.4s ease-in-out infinite; }
+@keyframes latido { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.25);opacity:.7} }
 .juego img, .juego .nada { display:block; width:100%; aspect-ratio:1; object-fit:cover; }
 .juego .nada { display:grid; place-items:center; background:rgba(255,255,255,.06);
                color:var(--tenue); font-size:30px; }
@@ -200,11 +207,12 @@ section { margin-bottom:38px; scroll-margin-top:96px; }
 .velo.on { opacity:1; pointer-events:auto; }
 .hoja {
   position:fixed; z-index:41; left:50%; bottom:0; width:min(560px,94vw);
-  transform:translate(-50%,102%); transition:transform .42s cubic-bezier(.2,.9,.25,1);
+  transform:translate(-50%,102%) scale(.96); opacity:0;
+  transition:transform .46s cubic-bezier(.2,.9,.25,1), opacity .3s;
   border-radius:var(--r-g) var(--r-g) 0 0; padding:26px 28px 34px;
   max-height:86vh; overflow-y:auto;
 }
-.hoja.on { transform:translate(-50%,0); }
+.hoja.on { transform:translate(-50%,0) scale(1); opacity:1; }
 .hoja .asa { width:42px; height:5px; border-radius:3px;
              background:rgba(255,255,255,.28); margin:0 auto 20px; }
 .hoja .cab { display:flex; gap:18px; align-items:center; margin-bottom:20px; }
@@ -251,10 +259,20 @@ pre.log { margin:0; padding:20px; border-radius:var(--r-m); max-height:340px; ov
 /* ---------- barra flotante de abajo ---------- */
 nav.tabs { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:30;
   display:flex; gap:4px; padding:7px; border-radius:999px; }
+/* La pastilla se desliza entre pestanas en vez de saltar, igual que la gota del
+   menu de la consola. La posicion la mide el JS. */
+nav.tabs::before {
+  content:""; position:absolute; top:7px; height:calc(100% - 14px);
+  left:var(--px,7px); width:var(--pw,0px); border-radius:999px;
+  background:var(--acento); opacity:var(--po,0);
+  transition:left .42s cubic-bezier(.34,1.25,.5,1), width .42s cubic-bezier(.34,1.25,.5,1),
+             opacity .25s;
+}
+nav.tabs a { position:relative; z-index:1; }
 nav.tabs a { padding:9px 17px; border-radius:999px; font-size:13px; text-decoration:none;
   color:var(--tenue); transition:color .2s, background .2s; white-space:nowrap; }
 nav.tabs a:hover { color:var(--tinta); }
-nav.tabs a.on { color:#042126; background:var(--acento); font-weight:600; }
+nav.tabs a.on { color:#042126; font-weight:600; }
 
 /* ---------- pie ---------- */
 footer { margin:8px 0 30px; padding:22px 26px; border-radius:var(--r-m);
@@ -264,6 +282,13 @@ footer a { color:var(--acento); text-decoration:none; font-size:13.5px;
 footer a:hover { text-decoration:underline; }
 footer .fin { margin-left:auto; color:var(--tenue); font-size:12.5px; }
 footer svg { width:15px; height:15px; fill:currentColor; }
+
+/* ---------- onda al pulsar ---------- */
+.onda { position:absolute; border-radius:50%; pointer-events:none;
+  background:radial-gradient(circle, rgba(255,255,255,.42), rgba(255,255,255,0) 70%);
+  transform:translate(-50%,-50%) scale(0); animation:onda .6s cubic-bezier(.2,.8,.3,1) forwards; }
+@keyframes onda { to { transform:translate(-50%,-50%) scale(1); opacity:0; } }
+.btn, .fila, .juego, nav.tabs a { position:relative; overflow:hidden; }
 
 /* ---------- diagnostico ---------- */
 #diag { display:none; margin-bottom:26px; padding:18px 22px; border-radius:var(--r-m);
@@ -283,10 +308,19 @@ footer svg { width:15px; height:15px; fill:currentColor; }
   transition:opacity .25s, transform .35s cubic-bezier(.2,.9,.3,1); font-size:14px; }
 #aviso.on { opacity:1; transform:translate(-50%,0); }
 
+/* "Reducir movimiento" trata de mareos: movimiento grande, deriva, parallax.
+   No significa "sin respuesta al pulsar". Apagarlo TODO dejaba la pagina
+   muerta en cualquier Windows que traiga la opcion puesta, que son casi todos.
+   Asi que aqui se apaga lo ambiental y se conserva lo que contesta a lo que
+   haces. Y si aun asi molesta, el interruptor de abajo lo quita entero. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation:none !important; transition:none !important; }
   #fondo { display:none; }
+  .hero::before { animation:none; }
   html { scroll-behavior:auto; }
+}
+/* El interruptor de la propia pagina, que manda sobre todo. */
+body.sin-animacion *, body.sin-animacion *::before, body.sin-animacion *::after {
+  animation:none !important; transition:none !important;
 }
 </style>
 </head>
@@ -378,6 +412,8 @@ footer svg { width:15px; height:15px; fill:currentColor; }
     <a href="https://github.com/Angelpro09xd/nxsavesync/issues" target="_blank" rel="noreferrer">
       <svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 3a1 1 0 011 1v4a1 1 0 01-2 0V5a1 1 0 011-1zm0 8.5a1.1 1.1 0 110-2.2 1.1 1.1 0 010 2.2z"/></svg>
       Informar de un fallo</a>
+    <button class="btn" id="b-anim" style="padding:7px 16px;font-size:12.5px">
+      Animaciones</button>
     <span class="fin" id="version">NX Save Sync</span>
   </footer>
 </div>
@@ -521,7 +557,8 @@ function pintaJuegos(l) {
     b.innerHTML = '<div class="marco">'
       + (j.caratula ? '<img src="/caratula/' + j.title_id + '.jpg?t=' + T + '" alt="" loading="lazy">'
                     : '<div class="nada">?</div>')
-      + '<span class="pto" style="color:' + col + '"></span></div>'
+      + '<span class="pto' + ((j.estado ?? 2) === 1 ? " espera" : "")
+      + '" style="color:' + col + '"></span></div>'
       + '<p></p>';
     b.querySelector("p").textContent = j.nombre || j.title_id;
     b.addEventListener("click", () => abreHoja(j));
@@ -735,15 +772,65 @@ document.querySelectorAll("[data-accion]").forEach((b) => {
   });
 });
 
+// Onda desde el punto exacto donde pulsas. Es el mismo detalle que en la
+// consola: cuesta cuatro lineas y cambia por completo la sensacion de que la
+// pagina responde.
+addEventListener("pointerdown", (e) => {
+  if (document.body.classList.contains("sin-animacion")) return;
+  const el = e.target.closest(".btn, .fila, .juego, nav.tabs a");
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const o = document.createElement("span");
+  o.className = "onda";
+  const d = Math.max(r.width, r.height) * 2.2;
+  o.style.width = o.style.height = d + "px";
+  o.style.left = (e.clientX - r.left) + "px";
+  o.style.top  = (e.clientY - r.top)  + "px";
+  el.appendChild(o);
+  setTimeout(() => o.remove(), 650);
+});
+
+// La pastilla de la barra de abajo persigue a la pestana activa. Se mide en
+// vivo porque el ancho de cada una depende de su texto.
+function mueveTab(a) {
+  const nav = document.querySelector("nav.tabs");
+  const r = a.getBoundingClientRect(), n = nav.getBoundingClientRect();
+  nav.style.setProperty("--px", (r.left - n.left) + "px");
+  nav.style.setProperty("--pw", r.width + "px");
+  nav.style.setProperty("--po", "1");
+}
+
 // La pestana activa sigue a lo que estas mirando.
 const tabs = [...document.querySelectorAll("nav.tabs a")];
 const vigia = new IntersectionObserver((es) => {
   es.forEach((e) => {
     if (!e.isIntersecting) return;
-    tabs.forEach((a) => a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id));
+    tabs.forEach((a) => {
+      const on = a.getAttribute("href") === "#" + e.target.id;
+      a.classList.toggle("on", on);
+      if (on) mueveTab(a);
+    });
   });
 }, { rootMargin: "-45% 0px -50% 0px" });
 document.querySelectorAll("section[id]").forEach((s) => vigia.observe(s));
+
+addEventListener("load",   () => mueveTab(document.querySelector("nav.tabs a.on")));
+addEventListener("resize", () => mueveTab(document.querySelector("nav.tabs a.on")));
+
+// El interruptor manda sobre el ajuste del sistema: si Windows trae "reducir
+// movimiento" puesto pero aqui las quieres, se quedan.
+const b_anim = $("#b-anim");
+function pintaAnim() {
+  const sin = localStorage.getItem("nxss-sin-animacion") === "1";
+  document.body.classList.toggle("sin-animacion", sin);
+  b_anim.textContent = sin ? "Animaciones: no" : "Animaciones: sí";
+}
+b_anim.addEventListener("click", () => {
+  const sin = localStorage.getItem("nxss-sin-animacion") === "1";
+  localStorage.setItem("nxss-sin-animacion", sin ? "0" : "1");
+  pintaAnim();
+});
+pintaAnim();
 
 carga(); cargaJuegos();
 setInterval(() => { carga(); cargaJuegos(); }, 5000);
