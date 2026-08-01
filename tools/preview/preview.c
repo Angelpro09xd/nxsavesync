@@ -124,7 +124,7 @@ static void data_init(void)
         g_users[i].shared    = (i != 1);
     }
 
-    g_hosts[0] = (scr_host_t){ "angel-LOQ-15ARP9", "192.168.1.232", "eden", 7878 };
+    g_hosts[0] = (scr_host_t){ "MI-PC", "192.168.1.50", "eden", 7878 };
     g_hosts[1] = (scr_host_t){ "ANGEL-WIN",        "192.168.1.248", "ryujinx", 7878 };
     g_hosts[2] = (scr_host_t){ "",                 "192.168.1.90",  "", 7878 };
 
@@ -147,7 +147,7 @@ static scr_ctx_t ctx(nav_t nav)
     c.accent    = ui_image_color(g_games[g_sel].icon, g_games[g_sel].icon_size);
     c.nav       = nav;
     c.user      = &g_users[0];
-    c.pc_name   = "angel-LOQ-15ARP9";
+    c.pc_name   = "MI-PC";
     c.pc_emu    = "eden";
     c.mode      = "Automatico";
     c.mode_auto = true;
@@ -180,7 +180,7 @@ static void draw_screen(int screen, const ui_input_t *in)
     static const char (*log)[160] = NULL;
     static char logbuf[6][160];
     if (!log) {
-        snprintf(logbuf[0], 160, "Conectado a angel-LOQ-15ARP9 / eden");
+        snprintf(logbuf[0], 160, "Conectado a MI-PC / eden");
         snprintf(logbuf[1], 160, "The Legend of Zelda: Tears of the Kingdom");
         snprintf(logbuf[2], 160, "  3 bajados, 0 subidos, 0 borrados");
         snprintf(logbuf[3], 160, "Tomodachi Life");
@@ -282,7 +282,7 @@ static void draw_screen(int screen, const ui_input_t *in)
         }
         scr_rows(&c, in, rows, 7, 1, 0, 6);
         scr_hints("A cambiar   Y refrescar   B volver");
-        scr_pc_cfg(&c, in, "angel-LOQ-15ARP9", rows, 7, 2, true, g_anim);
+        scr_pc_cfg(&c, in, "MI-PC", rows, 7, 2, true, g_anim);
         break;
     }
     }
