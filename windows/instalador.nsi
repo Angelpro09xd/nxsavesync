@@ -14,7 +14,7 @@ SetCompressor /SOLID lzma
 !include "FileFunc.nsh"
 
 !define NOMBRE   "NX Save Sync"
-!define VERSION  "5.1"
+!define VERSION  "5.2"
 !define AUTOR    "Angelpro09_Dev"
 !define CLAVE    "Software\Microsoft\Windows\CurrentVersion\Uninstall\NXSaveSync"
 
@@ -25,7 +25,7 @@ InstallDirRegKey HKCU "Software\NXSaveSync" "InstallDir"
 RequestExecutionLevel user
 ShowInstDetails show
 
-VIProductVersion "5.1.0.0"
+VIProductVersion "5.2.0.0"
 VIAddVersionKey "ProductName"     "${NOMBRE}"
 VIAddVersionKey "FileDescription" "Instalador de ${NOMBRE}"
 VIAddVersionKey "FileVersion"     "${VERSION}"
@@ -56,7 +56,9 @@ VIAddVersionKey "LegalCopyright"  "${AUTOR}"
 
 !define MUI_FINISHPAGE_SHOWREADME ""
 !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
-!define MUI_FINISHPAGE_SHOWREADME_TEXT "Instalar tambien en la consola (Switch por USB, con DBI en modo MTP)"
+; Corto a proposito: la casilla de la pagina final no hace salto de linea y
+; el texto largo se cortaba. El detalle va en el mensaje que sale despues.
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Instalar tambien en la consola"
 !define MUI_FINISHPAGE_SHOWREADME_FUNCTION InstalarEnConsola
 
 !define MUI_FINISHPAGE_LINK "Manual y codigo en GitHub"
@@ -76,15 +78,12 @@ VIAddVersionKey "LegalCopyright"  "${AUTOR}"
 Section "Programa" SecPrograma
     SectionIn RO
 
-    ; Si ya estaba corriendo, hay que pararlo o los archivos estan en uso. Se
-    ; buscan solo los procesos que salen de esta carpeta: matar todos los
-    ; pythonw del sistema se llevaria por delante programas de otros.
     DetailPrint "Cerrando la version anterior, si la hubiera..."
-    nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -Command \
-        "Get-Process pythonw,python -ErrorAction SilentlyContinue | \
-         Where-Object { $$_.Path -like \"$INSTDIR\*\" } | Stop-Process -Force"'
-    Pop $0
-    Sleep 700
+    Call CierraLoAnterior
+
+    ; Si a pesar de todo algun archivo sigue en uso, se marca para sustituirlo
+    ; al reiniciar en vez de plantar un dialogo de error al usuario.
+    SetOverwrite try
 
     SetOutPath "$INSTDIR\python"
     File /r "build\python\*.*"
@@ -144,6 +143,33 @@ SectionEnd
 ; la consola
 ; --------------------------------------------------------------------------
 
+; Cierra la copia que estuviera corriendo desde esta misma carpeta.
+;
+; Va en un archivo .ps1 y no en una linea suelta a proposito: meter PowerShell
+; dentro de una cadena de NSIS obliga a escapar comillas dentro de comillas, y
+; la primera version fallaba en silencio -- no cerraba nada y la instalacion se
+; caia con "Error abriendo archivo para escritura: python\_bz2.pyd".
+;
+; Se buscan solo los procesos que salen de $INSTDIR: matar todos los pythonw del
+; sistema se llevaria por delante programas de otra gente.
+Function CierraLoAnterior
+    StrCpy $R0 "$PLUGINSDIR\cerrar.ps1"
+
+    FileOpen $R1 $R0 w
+    FileWrite $R1 "$$carpeta = '$INSTDIR'$\r$\n"
+    FileWrite $R1 "Get-Process python,pythonw -ErrorAction SilentlyContinue |$\r$\n"
+    FileWrite $R1 "  Where-Object { $$_.Path -and $$_.Path.StartsWith($$carpeta) } |$\r$\n"
+    FileWrite $R1 "  Stop-Process -Force -ErrorAction SilentlyContinue$\r$\n"
+    FileClose $R1
+
+    nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$R0"'
+    Pop $R1
+
+    ; Windows tarda un momento en soltar los archivos aunque el proceso ya no
+    ; este. Sin esta espera, la copia siguiente se encuentra el .pyd en uso.
+    Sleep 1500
+FunctionEnd
+
 Function AbrirMenu
     Exec '"$INSTDIR\python\pythonw.exe" "$INSTDIR\app\abrir_menu.pyw"'
 FunctionEnd
@@ -170,11 +196,17 @@ FunctionEnd
 ; --------------------------------------------------------------------------
 
 Section "Uninstall"
-    nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -Command \
-        "Get-Process pythonw,python -ErrorAction SilentlyContinue | \
-         Where-Object { $$_.Path -like \"$INSTDIR\*\" } | Stop-Process -Force"'
-    Pop $0
-    Sleep 700
+    ; Lo mismo que al instalar, por el mismo motivo.
+    StrCpy $R0 "$PLUGINSDIR\cerrar.ps1"
+    FileOpen $R1 $R0 w
+    FileWrite $R1 "$$carpeta = '$INSTDIR'$\r$\n"
+    FileWrite $R1 "Get-Process python,pythonw -ErrorAction SilentlyContinue |$\r$\n"
+    FileWrite $R1 "  Where-Object { $$_.Path -and $$_.Path.StartsWith($$carpeta) } |$\r$\n"
+    FileWrite $R1 "  Stop-Process -Force -ErrorAction SilentlyContinue$\r$\n"
+    FileClose $R1
+    nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$R0"'
+    Pop $R1
+    Sleep 1500
 
     Delete "$DESKTOP\${NOMBRE}.lnk"
     RMDir /r "$SMPROGRAMS\${NOMBRE}"
