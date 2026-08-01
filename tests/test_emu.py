@@ -5,6 +5,7 @@ import os
 import shutil
 import struct
 import sys
+import time
 import tempfile
 from pathlib import Path
 
@@ -414,5 +415,64 @@ except RuntimeError:
     check("con 8 perfiles avisa en vez de pisar uno", True)
 
 shutil.rmtree(base.parent)
+
+# --- modo sin consola: espejo entre emuladores -------------------------
+#
+# Esto sobrescribe partidas sin que la consola participe, asi que lo que se
+# comprueba es sobre todo lo que NO debe hacer.
+import nxsavesyncd as _d
+
+_tmp = Path(tempfile.mkdtemp())
+def _emu(n):
+    b = _tmp / n
+    (b / "nand/user/save/0000000000000000/AAAA").mkdir(parents=True)
+    return emulators.Emulator(n, "yuzu", b)
+
+_A, _B = _emu("eden"), _emu("citron")
+_TID = 0x0100152000022000
+def _car(e): return e.base / f"nand/user/save/0000000000000000/AAAA/{_TID:016X}"
+_car(_A).mkdir(parents=True)
+
+class _RT:
+    emus = [_A, _B]; disabled = set(); sin_consola = True; args = None
+    def active_emus(self): return self.emus
+    _replica = _d.Runtime._replica
+    sync_shadows_de = _d.Runtime.sync_shadows_de
+
+_d.set_rutas(backups=str(_tmp / "copias"), estado=str(_tmp / "estado"))
+_esp = _d.Espejo(_RT()); _esp.REPOSO = 0
+
+(_car(_A) / "save.bin").write_bytes(b"de eden")
+_esp.pasada()
+check("espejo: llega al emulador que ni tenia la carpeta",
+      (_car(_B) / "save.bin").read_bytes() == b"de eden")
+
+_antes = (_car(_B) / "save.bin").stat().st_mtime_ns
+_esp.pasada()
+check("espejo: si ya son iguales no reescribe",
+      (_car(_B) / "save.bin").stat().st_mtime_ns == _antes)
+
+time.sleep(1.1)
+(_car(_B) / "save.bin").write_bytes(b"NUEVA de citron")
+_esp.pasada()
+check("espejo: gana el escrito mas tarde",
+      (_car(_A) / "save.bin").read_bytes() == b"NUEVA de citron")
+check("espejo: deja copia antes de sobrescribir",
+      len(list((_tmp / "copias").rglob("*.zip"))) > 0)
+
+# El borrado es el caso que obliga a llevar una base: borrar no cambia la fecha
+# de los archivos que quedan, asi que por fecha el que borro pierde y el archivo
+# resucita.
+time.sleep(1.1); (_car(_A) / "extra.sav").write_bytes(b"x"); _esp.pasada()
+check("espejo: un archivo nuevo viaja", (_car(_B) / "extra.sav").exists())
+time.sleep(1.1); (_car(_A) / "extra.sav").unlink(); _esp.pasada()
+check("espejo: un BORRADO tambien viaja", not (_car(_B) / "extra.sav").exists())
+
+_esp.REPOSO = 3600
+time.sleep(1.1); (_car(_A) / "save.bin").write_bytes(b"a medio guardar"); _esp.pasada()
+check("espejo: no copia lo recien escrito",
+      (_car(_B) / "save.bin").read_bytes() != b"a medio guardar")
+
+shutil.rmtree(_tmp)
 
 print("\nTODO OK")

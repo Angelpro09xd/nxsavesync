@@ -746,6 +746,152 @@ class Watcher(threading.Thread):
 
 
 # --------------------------------------------------------------------------
+# modo sin consola
+# --------------------------------------------------------------------------
+
+
+class Espejo(threading.Thread):
+    """Mantiene iguales los emuladores entre si, sin que la consola participe.
+
+    Sirve para el caso de tener eden y Ryujinx y querer jugar en cualquiera de
+    los dos con la misma partida, tenga la Switch encendida o no.
+
+    Las tres reglas que lo hacen seguro, y ninguna sobra:
+
+    1. **Solo se copia si el original lleva un rato quieto.** Un emulador que
+       acaba de escribir puede estar a mitad de guardar. Copiar eso deja una
+       partida corrupta en los demas.
+    2. **Antes de sobrescribir, copia de seguridad.** Es la misma que se hace
+       al sincronizar con la consola, con el nombre del juego.
+    3. **Manda la fecha, y solo entre carpetas del mismo PC.** Comparar fechas
+       entre la consola y el PC no vale porque sus relojes no coinciden; entre
+       dos emuladores de la misma maquina si.
+    """
+
+    # Cuanto tiene que llevar quieto el original antes de fiarse de el.
+    REPOSO = 20
+
+    def __init__(self, rt, interval: int = 15):
+        super().__init__(daemon=True)
+        self.rt = rt
+        self.interval = interval
+        self.stop_flag = threading.Event()
+        self.hechos = 0
+
+    def run(self) -> None:
+        while not self.stop_flag.wait(self.interval):
+            if not self.rt.sin_consola:
+                continue
+            try:
+                self.pasada()
+            except Exception as e:
+                log(f"espejo: {e}")
+
+    # -- la base ------------------------------------------------------------
+    #
+    # Lo que todos tenian la ultima vez que quedaron iguales. Sin esto, un
+    # borrado no se puede distinguir de "a ese le falta un archivo", porque
+    # borrar no cambia la fecha de los que quedan: el lado que borro parece el
+    # mas viejo, pierde, y el archivo resucita.
+
+    @staticmethod
+    def _base_path(title_id: int) -> Path:
+        d = estado_dir() / "espejo"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / f"{title_id:016X}.json"
+
+    def _lee_base(self, title_id: int) -> dict[str, int] | None:
+        try:
+            return {k: int(v) for k, v in
+                    json.loads(self._base_path(title_id).read_text()).items()}
+        except (OSError, json.JSONDecodeError, ValueError, AttributeError):
+            return None
+
+    def _guarda_base(self, title_id: int, manifest: dict[str, int]) -> None:
+        try:
+            self._base_path(title_id).write_text(json.dumps(manifest))
+        except OSError:
+            pass
+
+    def pasada(self) -> None:
+        activos = self.rt.active_emus()
+        if len(activos) < 2:
+            return
+
+        # De donde puede salir cada juego. Una carpeta vacia no cuenta como
+        # version: es la ausencia de una.
+        fuentes: dict[int, list] = {}
+        for emu in activos:
+            try:
+                for tid, carpeta in emulators.titulos(emu).items():
+                    m = scan_dir(carpeta)
+                    if not m:
+                        continue
+                    fuentes.setdefault(tid, []).append(
+                        (emu, carpeta, m, newest_mtime(carpeta)))
+            except Exception:
+                continue
+
+        ahora = time.time()
+
+        for tid, sitios in fuentes.items():
+            base = self._lee_base(tid)
+
+            # Quien ha cambiado desde la ultima vez que estaban iguales. Si solo
+            # uno, ese manda aunque su fecha sea mas vieja: es justo el caso del
+            # borrado. Si varios, decide la fecha, que entre carpetas del mismo
+            # PC si es de fiar.
+            cambiados = [x for x in sitios if base is None or x[2] != base]
+            candidatos = cambiados or sitios
+            candidatos.sort(key=lambda x: x[3], reverse=True)
+            emu_o, origen, man_o, fecha_o = candidatos[0]
+
+            # Recien escrito puede estar a medio guardar. Copiar eso deja una
+            # partida corrupta en los demas.
+            if ahora - fecha_o < self.REPOSO:
+                continue
+
+            nombre = lee_ficha(tid).get("nombre") or f"{tid:016X}"
+            movido = False
+
+            for emu_d in activos:
+                if emu_d is emu_o:
+                    continue
+
+                # El destino puede no tener todavia el juego: es el caso mas
+                # habitual y el que hace util todo esto. Ryujinx es la
+                # excepcion, porque sin entrada en su indice no se puede saber
+                # que carpeta le toca.
+                try:
+                    destino = emu_d.save_dir(tid)
+                except Exception:
+                    destino = None
+                if destino is None:
+                    continue
+
+                try:
+                    destino.mkdir(parents=True, exist_ok=True)
+                    man_d = scan_dir(destino)
+                    if man_d == man_o:
+                        continue
+
+                    if man_d:
+                        make_backup("sin-consola", tid, destino, nombre)
+
+                    n = self.rt._replica(origen, destino)
+                    self.rt.sync_shadows_de(emu_d, tid)
+                    self.hechos += 1
+                    movido = True
+                    log(f"espejo: {nombre}: {emu_o.name} -> {emu_d.name} "
+                        f"({n} archivo(s))")
+                except Exception as e:
+                    log(f"espejo: no se pudo copiar {nombre} a {emu_d.name}: {e}")
+
+            if movido or base != man_o:
+                self._guarda_base(tid, man_o)
+
+
+# --------------------------------------------------------------------------
 # descubrimiento
 # --------------------------------------------------------------------------
 
@@ -1491,6 +1637,9 @@ class Runtime:
         self.profile = args.profile or cfg.get("profile")
         self.disabled: set[str] = set(cfg.get("emuladores_desactivados", []))
         self.mirror = bool(cfg.get("mirror", True))
+        # Mantener los emuladores iguales entre si, con o sin consola.
+        self.sin_consola = bool(cfg.get("sin_consola", False))
+        self.espejo: "Espejo | None" = None
         self.watcher: Watcher | None = None
         self.disc: Discovery | None = None
         # Callback opcional (tipo, mensaje) para interfaces como la bandeja de
@@ -1680,6 +1829,24 @@ class Runtime:
                 if n:
                     log(f"  {emu.name}: replicado en {hermana.name}/ ({n} archivo(s))")
 
+    def sync_shadows_de(self, emu, title_id: int) -> None:
+        """Iguala las carpetas hermanas de un emulador concreto.
+
+        Ryujinx reparte cada partida entre una carpeta confirmada y otra de
+        trabajo, y es la de trabajo la que lee el juego. Sin esto, en modo sin
+        consola la copia llega pero el juego sigue viendo la partida vieja.
+        """
+        try:
+            d = emu.save_dir(title_id)
+            if d is None or not d.is_dir():
+                return
+            for hermana in emu.shadow_dirs(d):
+                n = self._replica(d, hermana)
+                if n:
+                    log(f"  {emu.name}: replicado en {hermana.name}/ ({n} archivo(s))")
+        except Exception:
+            pass
+
     def mirror_to_others(self, uid: str, title_id: int, source: Path, name: str) -> None:
         """Replica el resultado en el resto de emuladores.
 
@@ -1713,6 +1880,12 @@ class Runtime:
                               options=[]))
 
         if len(self.emus) > 1:
+            items.append(dict(key="sin_consola", type=CFG_BOOL,
+                              label="Modo sin consola",
+                              help="Mantiene los emuladores iguales entre si sin "
+                                   "esperar a la Switch",
+                              value="1" if self.sin_consola else "0", options=[]))
+
             items.append(dict(key="mirror", type=CFG_BOOL,
                               label="Replicar entre emuladores",
                               help="Deja la misma partida en todos los activos",
@@ -1795,6 +1968,16 @@ class Runtime:
             self.cfg["emuladores_desactivados"] = sorted(self.disabled)
             act = self.active_emus()
             return f"{len(act)} emulador(es) activo(s)" if act else "Ninguno activo"
+
+        if key == "sin_consola":
+            want = value not in ("0", "", "false")
+            self.sin_consola = want
+            self.cfg["sin_consola"] = want
+            if want and not self.espejo:
+                self.espejo = Espejo(self)
+                self.espejo.start()
+            return ("Los emuladores se mantendran iguales entre si"
+                    if want else "Modo sin consola desactivado")
 
         if key == "mirror":
             self.mirror = value not in ("0", "", "false")
@@ -1947,6 +2130,11 @@ def main(argv=None, stop_event=None, rt_hook=None) -> int:
                              nudge=cfg.get("nudge", True))
         rt.watcher.start()
 
+    if rt.sin_consola:
+        rt.espejo = Espejo(rt)
+        rt.espejo.start()
+        log("Modo sin consola: los emuladores se mantendran iguales entre si")
+
     if not args.no_discovery and cfg.get("discovery", True):
         # Se pasa la funcion, no el valor: asi el anuncio refleja los
         # emuladores de ahora y no los de cuando arranco el daemon.
@@ -2004,6 +2192,8 @@ def main(argv=None, stop_event=None, rt_hook=None) -> int:
             rt.watcher.stop_flag.set()
         if rt.disc:
             rt.disc.stop_flag.set()
+        if rt.espejo:
+            rt.espejo.stop_flag.set()
         save_config(rt.cfg)
         srv.close()
 

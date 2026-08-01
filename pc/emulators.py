@@ -537,3 +537,48 @@ def clona_perfil(emu: "Emulator", uuid: str, nombre: str,
 
     return (f"{nombre} {'actualizado' if ya_estaba else 'creado'} en {emu.name}"
             f"{' con su foto' if avatar else ''}")
+
+
+def titulos(emu: "Emulator") -> dict[int, Path]:
+    """Los juegos que tiene guardados ese emulador: title_id -> carpeta.
+
+    Es el camino inverso a save_dir, y hace falta para el modo sin consola: sin
+    una Switch que diga que juegos hay, la unica forma de saberlo es mirar lo
+    que ya tiene cada emulador.
+    """
+    out: dict[int, Path] = {}
+
+    if emu.kind == "ryujinx":
+        # Ryujinx guarda la correspondencia en su indice; sin el no se puede
+        # adivinar que carpeta es de que juego.
+        for tid in _ryujinx_titles(emu):
+            d = emu.save_dir(tid)
+            if d is not None and d.is_dir():
+                out[tid] = d
+        return out
+
+    for perfil in emu.profiles():
+        if not perfil.is_dir():
+            continue
+        for d in perfil.iterdir():
+            if not d.is_dir():
+                continue
+            try:
+                tid = int(d.name, 16)
+            except ValueError:
+                continue
+            if tid:
+                out[tid] = d
+    return out
+
+
+def _ryujinx_titles(emu: "Emulator") -> list[int]:
+    idx = emu.base / "bis/system/save/8000000000000000/0/imkvdb.arc"
+    if not idx.is_file():
+        idx = emu.base / "system/save/8000000000000000/0/imkvdb.arc"
+    if not idx.is_file():
+        return []
+    try:
+        return list(parse_imkvdb(idx.read_bytes()).keys())
+    except Exception:
+        return []
