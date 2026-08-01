@@ -27,7 +27,7 @@ OP = dict(HELLO=0x01, HELLO_OK=0x81, PLAN_REQ=0x02, PLAN_RES=0x82,
 WARN_NONE, WARN_PC_EMPTY, WARN_SWITCH_EMPTY, WARN_ROOT_CHANGED = 0, 1, 2, 3
 DEC_SWITCH, DEC_PC, DEC_SKIP = 0, 1, 2
 
-VERSION = 6
+VERSION = 7
 MODE_MANUAL, MODE_AUTO = 0, 1
 POLICY_ASK, POLICY_SWITCH, POLICY_PC, POLICY_SKIP, POLICY_NEWEST = 0, 1, 2, 3, 4
 SUM_SYNCED, SUM_PC_CHANGED, SUM_UNKNOWN, SUM_NO_DIR = 0, 1, 2, 3
@@ -411,7 +411,9 @@ def main():
             out = {}
             for i in range(n):
                 # v5: tras el estado va el emulador donde se jugo por ultima vez.
-                tid, st, emu = struct.unpack_from("<QBB", data, 4 + i * 10)
+                # v7: estado, emulador donde se jugo, y si el PC ya tiene la
+                # caratula.
+                tid, st, emu, ic = struct.unpack_from("<QBBB", data, 4 + i * 11)
                 out[tid] = st
             c.s.close()
             return out

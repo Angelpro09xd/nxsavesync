@@ -158,11 +158,28 @@ bool sync_emus(net_t *n, emu_info_t *out, size_t max, size_t *out_n)
     return true;
 }
 
+bool sync_send_icon(net_t *n, u64 title_id, const char *name,
+                    const void *jpeg, size_t len)
+{
+    net_begin(n, OP_GAME_ICON);
+    net_w_u64(n, title_id);
+    net_w_str(n, name ? name : "");
+    net_w_u32(n, (u32)len);
+    if (len) net_w_bytes(n, jpeg, len);
+
+    if (!net_send(n)) return false;
+
+    u8 op;
+    if (!net_recv(n, &op)) return false;
+    return op == OP_GAME_ICON_OK;
+}
+
 bool sync_summary(net_t *n, AccountUid uid, const u64 *title_ids, size_t count,
-                  u8 *out_states, u8 *out_emu)
+                  u8 *out_states, u8 *out_emu, u8 *out_icon)
 {
     for (size_t i = 0; i < count; i++) out_states[i] = SUM_UNKNOWN;
-    if (out_emu) for (size_t i = 0; i < count; i++) out_emu[i] = 0xFF;
+    if (out_emu)  for (size_t i = 0; i < count; i++) out_emu[i] = 0xFF;
+    if (out_icon) for (size_t i = 0; i < count; i++) out_icon[i] = 0;
 
     net_begin(n, OP_SUMMARY_REQ);
     w_uid(n, uid);
@@ -178,14 +195,16 @@ bool sync_summary(net_t *n, AccountUid uid, const u64 *title_ids, size_t count,
     if (!net_r_u32(n, &got)) return false;
 
     for (u32 i = 0; i < got; i++) {
-        u64 tid; u8 state, emu;
-        if (!net_r_u64(n, &tid) || !net_r_u8(n, &state) || !net_r_u8(n, &emu))
+        u64 tid; u8 state, emu, icono;
+        if (!net_r_u64(n, &tid) || !net_r_u8(n, &state) || !net_r_u8(n, &emu)
+            || !net_r_u8(n, &icono))
             return false;
 
         for (size_t k = 0; k < count; k++)
             if (title_ids[k] == tid) {
                 out_states[k] = state;
-                if (out_emu) out_emu[k] = emu;
+                if (out_emu)  out_emu[k] = emu;
+                if (out_icon) out_icon[k] = icono;
                 break;
             }
     }

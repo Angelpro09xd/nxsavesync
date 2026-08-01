@@ -32,7 +32,7 @@ from pathlib import Path
 
 import emulators
 
-PROTO_VERSION = 6
+PROTO_VERSION = 7
 DEFAULT_PORT = 7878
 DISCOVERY_PORT = 7879
 MAX_FRAME = 64 * 1024 * 1024
@@ -60,6 +60,7 @@ OP_CFG_GET, OP_CFG_RES = 0x0A, 0x8A
 OP_CFG_SET, OP_CFG_OK = 0x0B, 0x8B
 OP_EMUS_REQ, OP_EMUS_RES = 0x0C, 0x8C   # v5: que emuladores hay en este PC
 OP_PROFILE, OP_PROFILE_RES = 0x0D, 0x8D # v6: clonar el perfil de la consola
+OP_GAME_ICON, OP_GAME_ICON_OK = 0x0E, 0x8E  # v7: caratula para el menu del PC
 OP_ERROR = 0xFF
 
 ACT_PULL, ACT_PUSH, ACT_DEL_LOCAL, ACT_DEL_REMOTE, ACT_CONFLICT = 0, 1, 2, 3, 4
@@ -346,6 +347,79 @@ def w_str(s: str) -> bytes:
 # --------------------------------------------------------------------------
 # estado por perfil
 # --------------------------------------------------------------------------
+
+
+def fichas_dir() -> Path:
+    """Donde viven las fichas por juego: nombre, caratula y ultimo movimiento.
+
+    Es para el menu del PC. Va aparte del estado de sincronizacion porque
+    aquello es maquinaria y esto es solo para ensenar.
+    """
+    d = estado_dir() / "juegos"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def ficha_path(title_id: int) -> Path:
+    return fichas_dir() / f"{title_id:016X}.json"
+
+
+def icono_path(title_id: int) -> Path:
+    return fichas_dir() / f"{title_id:016X}.jpg"
+
+
+def lee_ficha(title_id: int) -> dict:
+    try:
+        return json.loads(ficha_path(title_id).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def apunta_ficha(title_id: int, nombre: str, uid: str, **campos) -> None:
+    """Deja constancia de lo que le ha pasado a un juego.
+
+    Se guarda el ultimo movimiento y un acumulado, que juntos responden a las
+    dos preguntas que uno se hace: que paso la ultima vez, y cuanto se ha
+    movido en total.
+    """
+    f = lee_ficha(title_id)
+    f["title_id"] = f"{title_id:016X}"
+    if nombre:
+        f["nombre"] = nombre
+    f["uid"] = uid
+    f["cuando"] = time.time()
+    f.update(campos)
+
+    for k in ("bajados", "subidos", "borrados"):
+        f["total_" + k] = int(f.get("total_" + k, 0)) + int(campos.get(k, 0))
+    f["veces"] = int(f.get("veces", 0)) + 1
+
+    try:
+        ficha_path(title_id).write_text(json.dumps(f, ensure_ascii=False),
+                                        encoding="utf-8")
+    except OSError:
+        pass
+
+
+def apunta_estado(title_id: int, estado: int, nombre: str = "") -> None:
+    """Refresca solo el estado de la ficha, y solo si cambio.
+
+    El resumen pasa por todos los juegos en cada conexion; reescribir una
+    docena de archivos cada vez para dejarlos igual no tiene sentido.
+    """
+    f = lee_ficha(title_id)
+    if f.get("estado") == estado and (not nombre or f.get("nombre") == nombre):
+        return
+
+    f["title_id"] = f"{title_id:016X}"
+    f["estado"] = estado
+    if nombre:
+        f["nombre"] = nombre
+    try:
+        ficha_path(title_id).write_text(json.dumps(f, ensure_ascii=False),
+                                        encoding="utf-8")
+    except OSError:
+        pass
 
 
 def state_path(uid: str, title_id: int) -> Path:
@@ -852,10 +926,46 @@ class Session:
             except Exception:
                 emu = -1
 
+            apunta_estado(title_id, state)
+
+            # v7: y si ya tenemos su caratula, para no pedirla otra vez.
+            tiene = 1 if icono_path(title_id).is_file() else 0
+
             body += (struct.pack("<Q", title_id) + bytes([state])
-                     + bytes([0xFF if emu < 0 else emu & 0xFF]))
+                     + bytes([0xFF if emu < 0 else emu & 0xFF])
+                     + bytes([tiene]))
 
         self.conn.send(OP_SUMMARY_RES, body)
+
+    def on_game_icon(self) -> None:
+        """La consola manda la caratula de un juego, una sola vez.
+
+        El PC no tiene forma de sacarla por su cuenta: los emuladores guardan
+        partidas, no la ficha del juego. Y sin caratula el menu es una lista de
+        nombres, que para reconocer un juego de un vistazo no vale.
+        """
+        title_id = self.conn.r_u64()
+        nombre = self.conn.r_str()
+        datos = self.conn.r_bytes()
+
+        if datos:
+            try:
+                icono_path(title_id).write_bytes(datos)
+            except OSError:
+                pass
+
+        f = lee_ficha(title_id)
+        f["title_id"] = f"{title_id:016X}"
+        if nombre:
+            f["nombre"] = nombre
+        try:
+            ficha_path(title_id).write_text(json.dumps(f, ensure_ascii=False),
+                                            encoding="utf-8")
+        except OSError:
+            pass
+
+        log(f"  caratula guardada: {nombre} ({len(datos)} bytes)")
+        self.conn.send(OP_GAME_ICON_OK)
 
     def on_profile(self) -> None:
         """Deja el perfil de la consola dentro de uno o varios emuladores.
@@ -1139,6 +1249,27 @@ class Session:
         ctx = self.titles.get((uid, title_id), {})
         self.rt.mirror_to_others(uid, title_id, root, ctx.get("name", ""))
 
+        # La ficha del juego, para el menu del PC: que se movio, cuando, y en
+        # que emulador acabo.
+        plan_hecho = ctx.get("plan", [])
+        cuenta = {"bajados": 0, "subidos": 0, "borrados": 0}
+        for accion, _ in plan_hecho:
+            if accion == ACT_PULL:                       cuenta["bajados"] += 1
+            elif accion == ACT_PUSH:                     cuenta["subidos"] += 1
+            elif accion in (ACT_DEL_LOCAL, ACT_DEL_REMOTE): cuenta["borrados"] += 1
+
+        try:
+            emu_idx = self.rt.last_played(uid, title_id)
+        except Exception:
+            emu_idx = -1
+
+        apunta_ficha(title_id, ctx.get("name", ""), uid,
+                     archivos=len(manifest),
+                     emulador=(self.rt.emus[emu_idx].name
+                               if 0 <= emu_idx < len(self.rt.emus) else ""),
+                     carpeta=str(root),
+                     **cuenta)
+
         if self.watcher is not None:
             with self.watcher.lock:
                 self.watcher.known[(uid, title_id)] = pc
@@ -1196,6 +1327,7 @@ class Session:
         OP_CFG_SET: on_cfg_set,
         OP_EMUS_REQ: on_emus_req,
         OP_PROFILE: on_profile,
+        OP_GAME_ICON: on_game_icon,
         OP_PLAN_REQ: on_plan_req,
         OP_RESOLVE: on_resolve,
         OP_PULL_REQ: on_pull_req,

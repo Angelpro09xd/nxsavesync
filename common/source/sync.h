@@ -77,7 +77,12 @@ bool sync_profile(net_t *n, AccountUid uid, const char *name,
 // Lista de emuladores del PC. Devuelve false si el PC no la da.
 bool sync_emus(net_t *n, emu_info_t *out, size_t max, size_t *out_n);
 
+// Manda la caratula de un juego para el menu del PC. Se hace una sola vez por
+// juego: el PC no tiene forma de conseguirla por su cuenta.
+bool sync_send_icon(net_t *n, u64 title_id, const char *name,
+                    const void *jpeg, size_t len);
+
 // `out_emu` (opcional) recibe, por juego, en cual de esos emuladores se jugo
 // por ultima vez. 0xFF si no se sabe.
 bool sync_summary(net_t *n, AccountUid uid, const u64 *title_ids, size_t count,
-                  u8 *out_states, u8 *out_emu);
+                  u8 *out_states, u8 *out_emu, u8 *out_icon);

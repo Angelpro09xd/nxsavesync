@@ -3,7 +3,7 @@
 
 #include <switch.h>
 
-#define PROTO_VERSION      6
+#define PROTO_VERSION      7
 #define PROTO_DEFAULT_PORT 7878
 #define PROTO_DISC_PORT    7879   // descubrimiento por UDP
 #define PROTO_NUDGE_PORT   7880   // toque del PC a la consola
@@ -51,6 +51,8 @@ enum {
     OP_EMUS_RES    = 0x8C,
     OP_PROFILE     = 0x0D,   // v6: clonar el perfil de la consola en un emulador
     OP_PROFILE_RES = 0x8D,
+    OP_GAME_ICON   = 0x0E,   // v7: la caratula de un juego, para el menu del PC
+    OP_GAME_ICON_OK = 0x8E,
     OP_ERROR       = 0xFF,
 };
 

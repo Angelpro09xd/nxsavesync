@@ -25,7 +25,7 @@
 #include "discovery.h"
 #include "notify.h"
 
-#define APP_VERSION "4.4"
+#define APP_VERSION "4.5"
 
 #define LOG_LINES 10
 #define VIEW_MAX  512
@@ -515,17 +515,29 @@ static void refresh_states(void)
     u64 *ids = malloc(g_games.n * sizeof(u64));
     u8  *st  = malloc(g_games.n);
     u8  *em  = malloc(g_games.n);
-    if (ids && st && em) {
+    u8  *ic  = malloc(g_games.n);
+    if (ids && st && em && ic) {
         for (size_t i = 0; i < g_games.n; i++) ids[i] = g_games.v[i].application_id;
-        if (sync_summary(&n, current_uid(), ids, g_games.n, st, em))
+        if (sync_summary(&n, current_uid(), ids, g_games.n, st, em, ic)) {
             for (size_t i = 0; i < g_games.n; i++) {
                 g_games.v[i].state = st[i];
                 g_games.v[i].emu   = em[i];
             }
+
+            // Las caratulas que al PC le falten. Solo una vez por juego: son
+            // unos 100 KB cada una y no cambian nunca.
+            for (size_t i = 0; i < g_games.n; i++) {
+                if (ic[i] || !g_games.v[i].icon) continue;
+                sync_send_icon(&n, g_games.v[i].application_id, g_games.v[i].name,
+                               g_games.v[i].icon, g_games.v[i].icon_size);
+                if (net_is_dead(&n)) break;
+            }
+        }
     }
     free(ids);
     free(st);
     free(em);
+    free(ic);
     net_close(&n);
 
     publica_estado();

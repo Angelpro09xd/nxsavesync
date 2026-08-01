@@ -182,6 +182,22 @@ class MenuWeb:
                     html = html.replace("__TOKEN__", menu.token)
                     self._responde(200, "text/html; charset=utf-8", html.encode())
 
+                elif ruta.startswith("/caratula/"):
+                    # /caratula/<TITLEID>.jpg
+                    tid = ruta.rsplit("/", 1)[-1].replace(".jpg", "")
+                    try:
+                        p = menu.daemon.fichas_dir() / f"{tid}.jpg"
+                        self._responde(200, "image/jpeg", p.read_bytes())
+                    except Exception:
+                        self._responde(404, "text/plain", b"")
+
+                elif ruta == "/api/juegos":
+                    try:
+                        self._json(menu.juegos())
+                    except Exception as e:
+                        menu.anota_fallo("montando los juegos")
+                        self._json({"error": f"{type(e).__name__}: {e}"}, 500)
+
                 elif ruta == "/logo.png":
                     ico = AQUI / "nxsavesync.ico"
                     if ico.exists():
@@ -262,6 +278,37 @@ class MenuWeb:
         if self.httpd:
             self.httpd.shutdown()
             self.httpd = None
+
+    def juegos(self) -> list[dict]:
+        """Una ficha por juego: caratula, estado y lo que se movio.
+
+        Sale de lo que va apuntando el daemon en cada sincronizacion, no de
+        preguntarle a la consola: el menu tiene que servir aunque la Switch
+        este apagada.
+        """
+        out = []
+        try:
+            base = self.daemon.fichas_dir()
+        except Exception:
+            return out
+
+        for f in base.glob("*.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+
+            tid = d.get("title_id") or f.stem
+            d["caratula"] = (base / f"{tid}.jpg").is_file()
+
+            if isinstance(d.get("cuando"), (int, float)):
+                d["cuando_txt"] = datetime.fromtimestamp(
+                    d["cuando"]).strftime("%d/%m/%Y %H:%M")
+            out.append(d)
+
+        # Lo ultimo tocado primero, que es lo que uno busca.
+        out.sort(key=lambda x: x.get("cuando") or 0, reverse=True)
+        return out
 
     @staticmethod
     def _cola_del_log(lineas: int = 25) -> str:

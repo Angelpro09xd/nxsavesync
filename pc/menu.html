@@ -99,6 +99,64 @@ section.on { display:block; animation:entra .3s cubic-bezier(.2,.75,.3,1) both; 
 h2 { margin:0 0 4px; font-size:19px; font-weight:640; }
 .ayuda { margin:0 0 20px; color:var(--dim); font-size:13.5px; }
 
+/* ---------- juegos ---------- */
+.juegos { display:grid; grid-template-columns:1fr 340px; gap:18px; align-items:start; }
+@media (max-width:1100px) { .juegos { grid-template-columns:1fr; } .detalle { display:none; } }
+
+.rejilla {
+  display:grid; gap:14px;
+  grid-template-columns:repeat(auto-fill,minmax(132px,1fr));
+}
+.carta {
+  position:relative; padding:12px; border-radius:20px; cursor:pointer;
+  background:var(--pane); border:1px solid var(--line);
+  animation:sube .34s cubic-bezier(.2,.75,.3,1) both; animation-delay:var(--t,0s);
+  transition:transform .22s cubic-bezier(.2,.8,.3,1), border-color .22s,
+             box-shadow .22s, background .22s;
+}
+.carta:hover { transform:translateY(-4px); background:var(--pane-hi); }
+.carta.on {
+  border-color:rgba(74,216,230,.6);
+  border-color:color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow:0 0 0 1px rgba(74,216,230,.35), 0 14px 40px rgba(0,0,0,.4);
+  background:var(--pane-hi);
+}
+.carta img, .carta .sin {
+  width:100%; aspect-ratio:1; border-radius:14px; display:block;
+  object-fit:cover; background:rgba(255,255,255,.05);
+}
+.carta .sin { display:grid; place-items:center; color:var(--dim); font-size:26px; }
+.carta p {
+  margin:9px 2px 0; font-size:12.5px; line-height:1.35; color:var(--ink);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+/* El punto de estado va sobre la caratula, con un halo oscuro debajo para que
+   se vea igual sobre una portada clara que sobre una oscura. */
+.carta .pto {
+  position:absolute; top:20px; right:20px; width:13px; height:13px;
+  border-radius:50%; box-shadow:0 0 0 3px rgba(0,0,0,.55), 0 0 14px currentColor;
+  background:currentColor;
+}
+
+.detalle { border-radius:22px; padding:20px; position:sticky; top:0; }
+.detalle .port { width:120px; aspect-ratio:1; border-radius:20px; margin:0 auto 16px;
+  display:block; object-fit:cover; box-shadow:0 12px 34px rgba(0,0,0,.45); }
+.detalle h3 { margin:0 0 4px; font-size:18px; font-weight:640; line-height:1.3; }
+.detalle .sub { margin:0 0 16px; font-size:12.5px; color:var(--dim);
+  font-family:var(--mono); }
+.detalle dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:9px 14px;
+  font-size:13px; }
+.detalle dt { color:var(--dim); }
+.detalle dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+.detalle .vacio { color:var(--dim); font-size:13.5px; text-align:center; padding:30px 10px; }
+.pill {
+  display:inline-flex; align-items:center; gap:7px; margin-bottom:16px;
+  padding:6px 13px; border-radius:999px; font-size:12.5px;
+  border:1px solid currentColor;
+}
+.pill i { width:7px; height:7px; border-radius:50%; background:currentColor; }
+
 /* ---------- cifras ---------- */
 .cifras {
   display:grid; gap:12px; margin-bottom:20px;
@@ -250,7 +308,9 @@ pre.log {
 <div class="app">
   <nav class="dock glass" aria-label="Secciones">
     <img class="logo" src="/logo.png?t=__TOKEN__" alt="">
-    <button class="nav on" data-sec="estado">
+    <button class="nav on" data-sec="juegos">
+      <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>Juegos</button>
+    <button class="nav" data-sec="estado">
       <svg viewBox="0 0 24 24"><path d="M4 13h4v7H4zm6-9h4v16h-4zm6 5h4v11h-4z"/></svg>Estado</button>
     <button class="nav" data-sec="emuladores">
       <svg viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zm5 13h6v2H9z"/></svg>Emuladores</button>
@@ -269,7 +329,7 @@ pre.log {
   <main>
     <div class="cabecera">
       <div>
-        <h1 id="titulo">Estado</h1>
+        <h1 id="titulo">Juegos</h1>
         <p>NX Save Sync · Angelpro09_Dev</p>
       </div>
       <div class="chips glass">
@@ -282,7 +342,7 @@ pre.log {
     <div id="diag"></div>
 
     <div class="hoja glass">
-      <section id="s-estado" class="on">
+      <section id="s-estado">
         <h2>Estado</h2>
         <p class="ayuda">Lo que ha hecho el daemon desde que arrancó.</p>
         <div class="cifras" id="cifras"></div>
@@ -290,6 +350,16 @@ pre.log {
         <div class="acciones">
           <button class="btn pri" data-accion="rescan">Volver a buscar emuladores</button>
           <button class="btn" data-accion="copias">Abrir carpeta de copias</button>
+        </div>
+      </section>
+
+      <section id="s-juegos" class="on">
+        <h2>Juegos</h2>
+        <p class="ayuda">Lo que ha pasado con cada partida. Las carátulas las
+        manda la consola la primera vez que sincroniza cada juego.</p>
+        <div class="juegos">
+          <div class="rejilla" id="rejilla"></div>
+          <div class="detalle glass" id="detalle"></div>
         </div>
       </section>
 
@@ -368,8 +438,8 @@ function aviso(txt) {
 }
 
 // ---------- secciones ----------
-const TITULOS = { estado:"Estado", emuladores:"Emuladores", ajustes:"Ajustes",
-                  copias:"Copias", registro:"Registro" };
+const TITULOS = { juegos:"Juegos", estado:"Estado", emuladores:"Emuladores",
+                  ajustes:"Ajustes", copias:"Copias", registro:"Registro" };
 
 // La pastilla del dock persigue al elegido. Se mide en vez de calcularse:
 // el dock cambia de forma en pantallas estrechas.
@@ -599,6 +669,78 @@ function pintaCopias(cs) {
   escalona(cont);
 }
 
+// Los estados que manda el daemon, con su color y su frase.
+const ESTADOS = {
+  0: ["var(--ok)",     "Al día"],
+  1: ["var(--warn)",   "Cambios en el PC"],
+  2: ["var(--dim)",    "Sin sincronizar"],
+  3: ["var(--err)",    "Sin carpeta en el PC"],
+};
+
+let JUEGOS = [], JSEL = 0;
+
+function pintaJuegos(lista) {
+  JUEGOS = lista;
+  const rej = $("#rejilla");
+  rej.innerHTML = "";
+
+  if (!lista.length) {
+    rej.innerHTML = '<p class="ayuda">Todavía no hay ninguno. Sincroniza desde la '
+                  + 'consola y aparecerán aquí, con su carátula.</p>';
+    $("#detalle").innerHTML = '<div class="vacio">Nada que enseñar todavía.</div>';
+    return;
+  }
+
+  lista.forEach((j, i) => {
+    const c = document.createElement("div");
+    c.className = "carta" + (i === JSEL ? " on" : "");
+    c.style.setProperty("--t", (i * 0.035) + "s");
+
+    const [col] = ESTADOS[j.estado ?? 2] || ESTADOS[2];
+    c.innerHTML = (j.caratula
+        ? `<img src="/caratula/${j.title_id}.jpg?t=${T}" alt="" loading="lazy">`
+        : `<div class="sin">?</div>`)
+      + `<span class="pto" style="color:${col}"></span>`
+      + `<p>${(j.nombre || j.title_id)}</p>`;
+
+    c.addEventListener("click", () => { JSEL = i; pintaJuegos(JUEGOS); });
+    rej.appendChild(c);
+  });
+
+  pintaDetalle(lista[Math.min(JSEL, lista.length - 1)]);
+}
+
+function pintaDetalle(j) {
+  const d = $("#detalle");
+  if (!j) { d.innerHTML = '<div class="vacio">Elige un juego.</div>'; return; }
+
+  const [col, txt] = ESTADOS[j.estado ?? 2] || ESTADOS[2];
+  const fila = (k, v) => v === undefined || v === null || v === ""
+      ? "" : `<dt>${k}</dt><dd>${v}</dd>`;
+
+  d.innerHTML =
+    (j.caratula ? `<img class="port" src="/caratula/${j.title_id}.jpg?t=${T}" alt="">` : "")
+    + `<h3>${j.nombre || "Sin nombre"}</h3>`
+    + `<p class="sub">${j.title_id}</p>`
+    + `<span class="pill" style="color:${col}"><i></i>${txt}</span>`
+    + "<dl>"
+    + fila("Última vez", j.cuando_txt)
+    + fila("Sincronizado", j.veces ? j.veces + (j.veces === 1 ? " vez" : " veces") : "")
+    + fila("Archivos", j.archivos)
+    + fila("Emulador", j.emulador)
+    + fila("Bajados en total", j.total_bajados)
+    + fila("Subidos en total", j.total_subidos)
+    + fila("Borrados en total", j.total_borrados)
+    + "</dl>";
+}
+
+async function cargaJuegos() {
+  try {
+    const l = await pide("/api/juegos");
+    if (Array.isArray(l)) pintaJuegos(l);
+  } catch { /* el banner ya lo cuenta */ }
+}
+
 async function carga() {
   let d;
   try {
@@ -647,7 +789,8 @@ async function carga() {
 }
 
 carga();
-setInterval(carga, 5000);
+cargaJuegos();
+setInterval(() => { carga(); cargaJuegos(); }, 5000);
 
 // ---------- el fondo vivo, como en la consola ----------
 (function () {
