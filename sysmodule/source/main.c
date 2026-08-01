@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -446,8 +447,16 @@ int main(int argc, char **argv)
         logf_bg("desactivado; se activa desde la app o poniendo fondo=1 en config.txt");
 
     bool was_running = false;
-    u64  last_pass = 0;
-    u64  ticks_per_sec = armGetSystemTickFreq();
+
+    // El reloj de pared, no el contador de ticks.
+    //
+    // armGetSystemTick se para durante el reposo. Al despertar seguia donde lo
+    // dejo, asi que el repaso periodico creia que acababa de hacerse y no
+    // disparaba: habia que abrir la app para que se sincronizara. El reloj de
+    // pared si avanza mientras la consola duerme.
+    time_t last_pass = 0;     // cuando fue el ultimo repaso
+    time_t last_loop = 0;     // cuando paso la vuelta anterior
+    bool   desperto  = false; // venimos del reposo y aun no hemos repasado
 
     for (;;) {
         svcSleepThread(5000000000ULL);   // 5 s entre comprobaciones
@@ -455,6 +464,16 @@ int main(int argc, char **argv)
         // Se relee cada vuelta para que lo que cambies en la app se aplique sin
         // reiniciar la consola.
         settings_load();
+
+        // Si entre dos vueltas ha pasado mucho mas de lo que dormimos, es que
+        // la consola estuvo en reposo. Al volver hay que repasar: mientras
+        // dormia han podido cambiar cosas en el PC.
+        time_t wall = time(NULL);
+        if (last_loop && wall - last_loop > 60) {
+            desperto = true;
+            logf_bg("la consola estuvo en reposo %lld s", (long long)(wall - last_loop));
+        }
+        last_loop = wall;
 
         // Se vacia siempre la cola, aunque no vayamos a usarlo: si no, se
         // acumularian avisos viejos y el primer repaso sobraria.
@@ -470,14 +489,16 @@ int main(int argc, char **argv)
             continue;
         }
 
-        u64 now = armGetSystemTick();
         bool just_closed = was_running && g_set.bg_on_exit;
-        bool periodic = last_pass == 0 ||
-                        (now - last_pass) / ticks_per_sec >= g_set.bg_interval;
+        bool periodic = last_pass == 0 || (wall - last_pass) >= g_set.bg_interval;
 
         was_running = false;
 
-        if (!just_closed && !periodic && !nudged && !pedido) continue;
+        if (!just_closed && !periodic && !nudged && !pedido && !desperto) continue;
+
+        // Al salir del reposo la red tarda un poco en volver. Si aun no esta,
+        // se deja `desperto` puesto y se reintenta en la vuelta siguiente en
+        // vez de perder el aviso.
         if (!network_up()) continue;
 
         // Un respiro tras cerrar el juego: el sistema aun esta terminando de
@@ -487,11 +508,13 @@ int main(int argc, char **argv)
 
         if (pedido) asked_now(true);   // ya se va a hacer: se consume la peticion
 
-        sync_pass(pedido     ? "pedido desde el overlay"
+        sync_pass(pedido      ? "pedido desde el overlay"
                 : just_closed ? "al cerrar el juego"
+                : desperto    ? "al salir del reposo"
                 : nudged      ? "aviso del PC"
                               : "repaso periodico");
-        last_pass = armGetSystemTick();
+        desperto  = false;
+        last_pass = time(NULL);
     }
 
     return 0;
