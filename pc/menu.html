@@ -5,395 +5,377 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NX Save Sync</title>
 <style>
-/* La misma paleta y el mismo lenguaje que el homebrew: fondo casi negro, luces
-   de color moviendose detras, y paneles que las dejan pasar desenfocadas. */
+/* ==========================================================================
+   Cristal liquido
+   ==========================================================================
+   La estructura es a proposito distinta a la de la consola. Alli hay un dock
+   fijo a la izquierda y una rejilla; aqui se baja en vertical por bloques, con
+   una barra flotante abajo. Se navega distinto porque se usa distinto: en la
+   consola se opera, en el PC se consulta.
+
+   El vidrio lleva cuatro capas y cada una hace una cosa:
+     1. desenfoque + saturacion del fondo  -> el vidrio en si
+     2. refraccion solo en el canto        -> el grosor
+     3. luz especular arriba               -> de donde viene la luz
+     4. sombra proyectada                  -> a que altura flota
+   Quita cualquiera de las cuatro y deja de parecer vidrio. */
+
 :root {
-  --ground:#07090E;
-  --pane:rgba(175,190,214,.055);
-  --pane-hi:rgba(175,190,214,.10);
-  --line:rgba(226,236,250,.11);
-  --ink:#F4F7FB; --dim:#98A5B8;
-  --accent:#4AD8E6;
-  --ok:#5CE09B; --warn:#FFC14D; --err:#FF6B7A;
-  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --fondo:#05070C;
+  --vidrio:rgba(255,255,255,.065);
+  --canto:rgba(255,255,255,.14);
+  --tinta:#F5F8FC;
+  --tenue:#98A6BA;
+  --acento:#4AD8E6;
+  --ok:#4FE0A0;
+  --aviso:#FFC24D;
+  --error:#FF6B7A;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI",
+         system-ui,Roboto,sans-serif;
   --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --r-g:30px;
+  --r-m:20px;
 }
+
 * { box-sizing:border-box; }
-html,body { height:100%; }
+html { scroll-behavior:smooth; }
 body {
-  margin:0; background:var(--ground); color:var(--ink);
-  font-family:var(--sans); font-size:15px; line-height:1.6;
-  overflow:hidden; -webkit-font-smoothing:antialiased;
+  margin:0; background:var(--fondo); color:var(--tinta);
+  font-family:var(--sans); font-size:15px; line-height:1.55;
+  -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  padding-bottom:120px;
 }
 #fondo { position:fixed; inset:0; z-index:0; }
+.pagina { position:relative; z-index:1; max-width:1080px; margin:0 auto; padding:0 22px; }
 
-.app { position:relative; z-index:1; height:100%; display:flex; gap:22px; padding:22px; }
-
-/* ---------- dock, igual que en la consola ---------- */
-.dock {
-  position:relative;
-  flex:0 0 86px; align-self:center;
-  display:flex; flex-direction:column; align-items:center; gap:4px;
-  padding:16px 0; border-radius:44px;
+/* ---------- el vidrio ---------- */
+.v {
+  position:relative; isolation:isolate;
+  background:var(--vidrio);
+  backdrop-filter:blur(30px) saturate(200%) brightness(1.06);
+  -webkit-backdrop-filter:blur(30px) saturate(200%) brightness(1.06);
+  border:1px solid var(--canto);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.30),
+    inset 0 -1px 0 rgba(255,255,255,.05),
+    inset 0 24px 40px -34px rgba(255,255,255,.35),
+    0 10px 26px -8px rgba(0,0,0,.55),
+    0 34px 70px -24px rgba(0,0,0,.5);
 }
-/* La pastilla del elegido se desliza en vez de saltar, como la gota del
-   homebrew. La posicion la pone el JS. */
-.dock::after {
-  content:""; position:absolute; left:8px; width:70px; height:var(--nav-h,58px);
-  top:var(--nav-y,0px); border-radius:20px;
-  background:rgba(74,216,230,.20);
-  background:color-mix(in srgb, var(--accent) 20%, transparent);
-  box-shadow:0 0 0 1px rgba(74,216,230,.42), 0 0 28px rgba(74,216,230,.22);
-  transition:top .34s cubic-bezier(.34,1.3,.5,1), height .24s ease, opacity .2s;
-  opacity:var(--nav-op,0); pointer-events:none;
-}
-.glass {
-  background:var(--pane);
-  backdrop-filter:blur(28px) saturate(1.3);
-  -webkit-backdrop-filter:blur(28px) saturate(1.3);
-  border:1px solid var(--line);
-  box-shadow:0 18px 50px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.14);
-}
-.logo { width:52px; height:52px; margin-bottom:12px; opacity:.95; }
-.nav {
-  width:70px; padding:11px 0; border:0; background:transparent; color:var(--dim);
-  border-radius:20px; cursor:pointer; font:inherit; font-size:11px;
-  display:flex; flex-direction:column; align-items:center; gap:5px;
-  transition:color .18s ease, background .18s ease, transform .18s ease;
-}
-.nav svg { width:22px; height:22px; fill:currentColor; }
-.nav:hover { color:var(--ink); background:rgba(255,255,255,.05); }
-.nav { position:relative; z-index:1; }
-.nav.on { color:var(--ink); }
-.nav.on svg { transform:scale(1.12); }
-.nav svg { transition:transform .26s cubic-bezier(.34,1.4,.5,1); }
-.nav:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.estado-dock { margin-top:auto; padding-top:14px; text-align:center; font-size:11px; color:var(--dim); }
-.punto { width:9px; height:9px; border-radius:50%; margin:0 auto 5px; background:var(--ok); }
-
-/* ---------- columna principal ---------- */
-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:18px; }
-
-.cabecera { display:flex; align-items:flex-start; gap:18px; flex-wrap:wrap; }
-h1 { margin:0; font-size:32px; font-weight:650; letter-spacing:-.02em; }
-.cabecera p { margin:2px 0 0; color:var(--dim); font-size:13.5px; }
-.chips { margin-left:auto; display:flex; align-items:stretch; border-radius:26px; overflow:hidden; }
-.chip { padding:9px 17px; display:flex; flex-direction:column; justify-content:center; }
-.chip + .chip { border-left:1px solid var(--line); }
-.chip b { font-size:11px; font-weight:500; color:var(--dim); letter-spacing:.04em; }
-.chip span { font-size:14px; }
-
-.hoja { flex:1; min-height:0; border-radius:24px; padding:24px; overflow-y:auto; }
-.hoja::-webkit-scrollbar { width:10px; }
-.hoja::-webkit-scrollbar-thumb { background:rgba(255,255,255,.14); border-radius:6px; }
-
-section { display:none; }
-section.on { display:block; animation:entra .3s cubic-bezier(.2,.75,.3,1) both; }
-@keyframes entra { from { opacity:0; transform:translateY(16px) scale(.985); } }
-
-/* Las filas entran una detras de otra. El retraso lo pone el JS como variable,
-   porque el numero de filas cambia y no se puede dejar escrito en el CSS. */
-.fila { animation:sube .34s cubic-bezier(.2,.75,.3,1) both; animation-delay:var(--t,0s); }
-@keyframes sube { from { opacity:0; transform:translateY(10px); } }
-
-h2 { margin:0 0 4px; font-size:19px; font-weight:640; }
-.ayuda { margin:0 0 20px; color:var(--dim); font-size:13.5px; }
-
-/* ---------- juegos ---------- */
-.juegos { display:grid; grid-template-columns:1fr 340px; gap:18px; align-items:start; }
-@media (max-width:1100px) { .juegos { grid-template-columns:1fr; } .detalle { display:none; } }
-
-.rejilla {
-  display:grid; gap:14px;
-  grid-template-columns:repeat(auto-fill,minmax(132px,1fr));
-}
-.carta {
-  position:relative; padding:12px; border-radius:20px; cursor:pointer;
-  background:var(--pane); border:1px solid var(--line);
-  animation:sube .34s cubic-bezier(.2,.75,.3,1) both; animation-delay:var(--t,0s);
-  transition:transform .22s cubic-bezier(.2,.8,.3,1), border-color .22s,
-             box-shadow .22s, background .22s;
-}
-.carta:hover { transform:translateY(-4px); background:var(--pane-hi); }
-.carta.on {
-  border-color:rgba(74,216,230,.6);
-  border-color:color-mix(in srgb, var(--accent) 60%, transparent);
-  box-shadow:0 0 0 1px rgba(74,216,230,.35), 0 14px 40px rgba(0,0,0,.4);
-  background:var(--pane-hi);
-}
-.carta img, .carta .sin {
-  width:100%; aspect-ratio:1; border-radius:14px; display:block;
-  object-fit:cover; background:rgba(255,255,255,.05);
-}
-.carta .sin { display:grid; place-items:center; color:var(--dim); font-size:26px; }
-.carta p {
-  margin:9px 2px 0; font-size:12.5px; line-height:1.35; color:var(--ink);
-  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
-  overflow:hidden;
-}
-/* El punto de estado va sobre la caratula, con un halo oscuro debajo para que
-   se vea igual sobre una portada clara que sobre una oscura. */
-.carta .pto {
-  position:absolute; top:20px; right:20px; width:13px; height:13px;
-  border-radius:50%; box-shadow:0 0 0 3px rgba(0,0,0,.55), 0 0 14px currentColor;
-  background:currentColor;
+/* La refraccion va SOLO en el canto. Aplicada a todo el panel, lo de detras
+   ondula por el centro y parece un cristal roto en vez de uno bueno. La
+   mascara deja un anillo de 18 px. */
+.v::after {
+  content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+  backdrop-filter:blur(1px) url(#refraccion);
+  padding:18px;
+  -webkit-mask:linear-gradient(#000,#000) content-box, linear-gradient(#000,#000);
+  -webkit-mask-composite:xor; mask-composite:exclude;
+  z-index:-1;
 }
 
-.detalle { border-radius:22px; padding:20px; position:sticky; top:0; }
-.detalle .port { width:120px; aspect-ratio:1; border-radius:20px; margin:0 auto 16px;
-  display:block; object-fit:cover; box-shadow:0 12px 34px rgba(0,0,0,.45); }
-.detalle h3 { margin:0 0 4px; font-size:18px; font-weight:640; line-height:1.3; }
-.detalle .sub { margin:0 0 16px; font-size:12.5px; color:var(--dim);
-  font-family:var(--mono); }
-.detalle dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:9px 14px;
-  font-size:13px; }
-.detalle dt { color:var(--dim); }
-.detalle dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
-.detalle .vacio { color:var(--dim); font-size:13.5px; text-align:center; padding:30px 10px; }
-.pill {
-  display:inline-flex; align-items:center; gap:7px; margin-bottom:16px;
-  padding:6px 13px; border-radius:999px; font-size:12.5px;
-  border:1px solid currentColor;
+/* ---------- barra de arriba ---------- */
+header {
+  position:sticky; top:14px; z-index:20; margin:14px 0 26px;
+  border-radius:999px; padding:11px 12px 11px 20px;
+  display:flex; align-items:center; gap:16px;
 }
-.pill i { width:7px; height:7px; border-radius:50%; background:currentColor; }
+header .marca { display:flex; align-items:center; gap:12px; margin-right:auto; }
+header img { width:38px; height:38px; border-radius:12px; }
+header b { font-size:16.5px; font-weight:640; letter-spacing:-.01em; display:block; }
+header small { font-size:11.5px; color:var(--tenue); }
+.pastillas { display:flex; gap:8px; }
+.pastilla {
+  padding:7px 15px; border-radius:999px; font-size:12.5px; white-space:nowrap;
+  background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.10);
+}
+.pastilla b { display:inline; font-size:12.5px; font-weight:600; }
+.pastilla span { color:var(--tenue); }
+@media (max-width:820px) { .pastillas .opc { display:none; } }
 
-/* ---------- cifras ---------- */
-.cifras {
-  display:grid; gap:12px; margin-bottom:20px;
-  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+/* ---------- hero ---------- */
+.hero {
+  border-radius:var(--r-g); padding:30px 34px; margin-bottom:34px;
+  display:flex; align-items:center; gap:30px; flex-wrap:wrap; overflow:hidden;
 }
-.cifra {
-  padding:18px 20px; border-radius:18px;
-  background:var(--pane); border:1px solid var(--line);
-  animation:sube .38s cubic-bezier(.2,.75,.3,1) both; animation-delay:var(--t,0s);
-  transition:transform .2s cubic-bezier(.2,.8,.3,1), border-color .2s;
+/* Un destello que cruza despacio. Es lo que hace que el vidrio parezca tener
+   superficie, en vez de ser un rectangulo translucido. */
+.hero::before {
+  content:""; position:absolute; inset:-40%; pointer-events:none;
+  background:linear-gradient(115deg,transparent 38%,rgba(255,255,255,.11) 47%,
+             rgba(255,255,255,.03) 52%,transparent 62%);
+  animation:destello 11s ease-in-out infinite;
 }
-.cifra:hover { transform:translateY(-3px); border-color:rgba(226,236,250,.2); }
-.cifra b {
-  display:block; font-size:30px; font-weight:640; letter-spacing:-.02em;
-  font-variant-numeric:tabular-nums; line-height:1.15;
-}
-.cifra span { font-size:12.5px; color:var(--dim); letter-spacing:.03em; }
-.cifra.ok b   { color:var(--ok); }
-.cifra.acento b { color:var(--accent); }
+@keyframes destello { 0%,100%{transform:translateX(-28%)} 50%{transform:translateX(28%)} }
 
-/* ---------- filas ---------- */
-.fila {
-  position:relative; overflow:hidden;
-  display:flex; align-items:center; gap:18px;
-  padding:15px 18px; border-radius:16px;
-  background:var(--pane); border:1px solid var(--line);
-  margin-bottom:10px;
-  transition:background .2s ease, transform .2s cubic-bezier(.2,.8,.3,1),
-             border-color .2s ease, box-shadow .2s ease;
+.hero .aro { position:relative; width:104px; height:104px; flex:0 0 auto; }
+.hero .aro svg { transform:rotate(-90deg); }
+.hero .aro circle { fill:none; stroke-width:9; stroke-linecap:round; }
+.hero .aro .pista { stroke:rgba(255,255,255,.09); }
+.hero .aro .val { stroke:var(--ok);
+  transition:stroke-dashoffset .9s cubic-bezier(.2,.8,.3,1), stroke .4s; }
+.hero .aro i {
+  position:absolute; inset:0; display:grid; place-items:center; font-style:normal;
+  font-size:27px; font-weight:650; font-variant-numeric:tabular-nums;
 }
-.fila:hover {
-  background:var(--pane-hi); transform:translateX(3px);
-  border-color:rgba(226,236,250,.2);
-  box-shadow:0 6px 22px rgba(0,0,0,.25);
-}
-/* Un filo de acento que crece al pasar por encima. */
-.fila::before {
-  content:""; position:absolute; left:0; top:12px; bottom:12px; width:3px;
-  border-radius:0 3px 3px 0; background:var(--accent);
-  transform:scaleY(0); transform-origin:center;
-  transition:transform .24s cubic-bezier(.2,.8,.3,1);
-}
-.fila:hover::before { transform:scaleY(1); }
-.fila .txt { flex:1; min-width:0; }
-.fila .txt b { display:block; font-weight:600; font-size:15px; }
-.fila .txt small { color:var(--dim); font-size:12.5px; }
-.fila .val { flex:0 0 auto; }
+.hero .txt { flex:1; min-width:190px; }
+.hero h1 { margin:0 0 5px; font-size:29px; font-weight:660; letter-spacing:-.02em; }
+.hero p { margin:0; color:var(--tenue); font-size:14px; }
+.hero .cifras { display:flex; gap:26px; margin-left:auto; }
+.hero .cifra b { display:block; font-size:26px; font-weight:640;
+                 font-variant-numeric:tabular-nums; }
+.hero .cifra span { font-size:11px; color:var(--tenue); letter-spacing:.05em;
+                    text-transform:uppercase; }
 
-/* interruptor */
-.sw {
-  width:50px; height:28px; border-radius:15px; border:1px solid var(--line);
-  background:rgba(255,255,255,.07); position:relative; cursor:pointer; padding:0;
-  transition:background .2s ease, box-shadow .2s ease;
-}
-.sw::after {
-  content:""; position:absolute; top:3px; left:3px; width:20px; height:20px;
-  border-radius:50%; background:var(--ink);
-  transition:transform .22s cubic-bezier(.3,.8,.3,1);
-}
-.sw[aria-checked="true"] {
-  background:rgba(74,216,230,.70);
-  background:color-mix(in srgb, var(--accent) 70%, transparent);
-  box-shadow:0 0 20px rgba(74,216,230,.40);
-  box-shadow:0 0 20px color-mix(in srgb, var(--accent) 40%, transparent);
-}
-.sw[aria-checked="true"]::after { transform:translateX(22px); }
-.sw:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+/* ---------- bloques ---------- */
+section { margin-bottom:38px; scroll-margin-top:96px; }
+.titulo { display:flex; align-items:baseline; gap:14px; margin:0 0 14px; padding:0 6px; }
+.titulo h2 { margin:0; font-size:13px; font-weight:640; letter-spacing:.09em;
+             text-transform:uppercase; color:var(--tenue); }
+.titulo em { font-style:normal; font-size:12.5px; color:var(--tenue);
+             opacity:.75; margin-left:auto; }
 
-select, input[type=number], input[type=text] {
-  font:inherit; font-size:14px; color:var(--ink);
-  background:rgba(255,255,255,.07); border:1px solid var(--line);
-  border-radius:11px; padding:8px 12px; min-width:150px;
+/* Lista agrupada: un solo bloque de vidrio con separadores dentro, en vez de
+   una tarjeta por fila. Con muchas filas pesa mucho menos a la vista. */
+.grupo { border-radius:var(--r-m); overflow:hidden; }
+.fila { display:flex; align-items:center; gap:16px; padding:15px 20px;
+        position:relative; transition:background .18s; }
+.fila + .fila::before {
+  content:""; position:absolute; top:0; left:20px; right:0; height:1px;
+  background:rgba(255,255,255,.07);
 }
-select:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.fila:hover { background:rgba(255,255,255,.045); }
+.fila .t { flex:1; min-width:0; }
+.fila .t b { display:block; font-weight:560; font-size:14.5px; }
+.fila .t small { color:var(--tenue); font-size:12.5px; }
+.fila .v2 { flex:0 0 auto; color:var(--tenue); font-size:13.5px; text-align:right; }
 
-.btn {
-  font:inherit; font-size:14px; color:var(--ink); cursor:pointer;
-  background:rgba(255,255,255,.09); border:1px solid var(--line);
-  border-radius:12px; padding:9px 18px;
-  transition:background .18s ease, transform .12s ease;
+/* ---------- carrusel de juegos ---------- */
+.tira { display:flex; gap:14px; overflow-x:auto; padding:4px 6px 16px;
+        scroll-snap-type:x mandatory; scrollbar-width:none; }
+.tira::-webkit-scrollbar { display:none; }
+.juego {
+  flex:0 0 148px; scroll-snap-align:start; cursor:pointer;
+  border:0; padding:0; background:none; text-align:left; color:inherit; font:inherit;
+  transition:transform .25s cubic-bezier(.2,.8,.3,1);
 }
-.btn:hover { background:rgba(255,255,255,.16); }
-.btn:active { transform:scale(.97); }
-.btn.pri {
-  background:rgba(74,216,230,.34);
-  background:color-mix(in srgb, var(--accent) 34%, transparent);
-  border-color:rgba(74,216,230,.70);
-  border-color:color-mix(in srgb, var(--accent) 70%, transparent);
-}
-.btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.acciones { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }
+.juego:hover { transform:translateY(-6px); }
+.juego:active { transform:translateY(-2px) scale(.98); }
+.juego .marco { position:relative; border-radius:var(--r-m); overflow:hidden;
+  box-shadow:0 10px 26px -6px rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.10); }
+.juego img, .juego .nada { display:block; width:100%; aspect-ratio:1; object-fit:cover; }
+.juego .nada { display:grid; place-items:center; background:rgba(255,255,255,.06);
+               color:var(--tenue); font-size:30px; }
+.juego .pto { position:absolute; top:10px; right:10px; width:14px; height:14px;
+  border-radius:50%; background:currentColor;
+  box-shadow:0 0 0 3px rgba(0,0,0,.55), 0 0 16px currentColor; }
+.juego p { margin:10px 3px 0; font-size:12.5px; line-height:1.35;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.juego:focus-visible .marco { outline:2px solid var(--acento); outline-offset:3px; }
 
-.info { font-family:var(--mono); font-size:13px; color:var(--dim); }
-.ruta { font-family:var(--mono); font-size:12.5px; color:var(--dim); word-break:break-all; }
-
-pre.log {
-  margin:0; padding:16px; border-radius:14px; max-height:100%;
-  background:rgba(0,0,0,.34); border:1px solid var(--line);
-  font-family:var(--mono); font-size:12.5px; line-height:1.75; color:var(--dim);
-  white-space:pre-wrap; word-break:break-word;
+/* ---------- hoja de detalle ---------- */
+.velo { position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.55);
+  opacity:0; pointer-events:none; transition:opacity .3s;
+  backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); }
+.velo.on { opacity:1; pointer-events:auto; }
+.hoja {
+  position:fixed; z-index:41; left:50%; bottom:0; width:min(560px,94vw);
+  transform:translate(-50%,102%); transition:transform .42s cubic-bezier(.2,.9,.25,1);
+  border-radius:var(--r-g) var(--r-g) 0 0; padding:26px 28px 34px;
+  max-height:86vh; overflow-y:auto;
 }
+.hoja.on { transform:translate(-50%,0); }
+.hoja .asa { width:42px; height:5px; border-radius:3px;
+             background:rgba(255,255,255,.28); margin:0 auto 20px; }
+.hoja .cab { display:flex; gap:18px; align-items:center; margin-bottom:20px; }
+.hoja .cab img { width:88px; height:88px; border-radius:22px; flex:0 0 auto;
+                 box-shadow:0 12px 30px rgba(0,0,0,.5); }
+.hoja h3 { margin:0 0 5px; font-size:19px; font-weight:640; line-height:1.28; }
+.hoja .tid { margin:0; font-family:var(--mono); font-size:11.5px; color:var(--tenue); }
+.marca-estado { display:inline-flex; align-items:center; gap:8px; margin-top:9px;
+  padding:5px 13px; border-radius:999px; font-size:12.5px; border:1px solid currentColor; }
+.marca-estado i { width:7px; height:7px; border-radius:50%; background:currentColor; }
+.hoja dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:11px 16px;
+           font-size:14px; }
+.hoja dt { color:var(--tenue); }
+.hoja dd { margin:0; text-align:right; word-break:break-all;
+           font-variant-numeric:tabular-nums; }
 
-/* ---------- onda al pulsar ---------- */
-.onda {
-  position:absolute; border-radius:50%; pointer-events:none;
-  background:rgba(255,255,255,.32); transform:translate(-50%,-50%) scale(0);
-  animation:onda .55s cubic-bezier(.2,.8,.3,1) forwards;
-}
-@keyframes onda { to { transform:translate(-50%,-50%) scale(1); opacity:0; } }
-.btn, .fila, .nav { position:relative; overflow:hidden; }
+/* ---------- controles ---------- */
+.sw { width:50px; height:30px; border-radius:15px; border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.08); position:relative; cursor:pointer; padding:0;
+  transition:background .25s, box-shadow .25s; }
+.sw::after { content:""; position:absolute; top:3px; left:3px; width:22px; height:22px;
+  border-radius:50%; background:#fff; box-shadow:0 2px 6px rgba(0,0,0,.4);
+  transition:transform .28s cubic-bezier(.3,1.4,.5,1); }
+.sw[aria-checked="true"] { background:var(--ok); box-shadow:0 0 22px rgba(79,224,160,.4); }
+.sw[aria-checked="true"]::after { transform:translateX(20px); }
+.sw:focus-visible { outline:2px solid var(--acento); outline-offset:3px; }
 
-/* ---------- banda de diagnostico ---------- */
-#diag {
-  display:none; margin-bottom:2px; padding:14px 18px; border-radius:16px;
-  border:1px solid rgba(255,107,122,.45); background:rgba(255,107,122,.12);
-  font-size:14px; line-height:1.55;
-}
+select, input[type=number] { font:inherit; font-size:13.5px; color:var(--tinta);
+  background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12);
+  border-radius:11px; padding:7px 11px; min-width:130px; }
+.btn { font:inherit; font-size:13.5px; color:var(--tinta); cursor:pointer;
+  background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.14);
+  border-radius:999px; padding:9px 20px; transition:background .18s, transform .12s; }
+.btn:hover { background:rgba(255,255,255,.17); }
+.btn:active { transform:scale(.96); }
+.btn.pri { background:rgba(74,216,230,.26); border-color:rgba(74,216,230,.5); color:#CFF6FA; }
+.btn:focus-visible { outline:2px solid var(--acento); outline-offset:2px; }
+.acciones { display:flex; gap:10px; flex-wrap:wrap; padding:16px 6px 0; }
+
+pre.log { margin:0; padding:20px; border-radius:var(--r-m); max-height:340px; overflow:auto;
+  background:rgba(0,0,0,.30); font-family:var(--mono); font-size:12px; line-height:1.8;
+  color:var(--tenue); white-space:pre-wrap; word-break:break-word; }
+
+/* ---------- barra flotante de abajo ---------- */
+nav.tabs { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:30;
+  display:flex; gap:4px; padding:7px; border-radius:999px; }
+nav.tabs a { padding:9px 17px; border-radius:999px; font-size:13px; text-decoration:none;
+  color:var(--tenue); transition:color .2s, background .2s; white-space:nowrap; }
+nav.tabs a:hover { color:var(--tinta); }
+nav.tabs a.on { color:#042126; background:var(--acento); font-weight:600; }
+
+/* ---------- pie ---------- */
+footer { margin:8px 0 30px; padding:22px 26px; border-radius:var(--r-m);
+         display:flex; gap:10px 26px; align-items:center; flex-wrap:wrap; }
+footer a { color:var(--acento); text-decoration:none; font-size:13.5px;
+           display:inline-flex; align-items:center; gap:8px; }
+footer a:hover { text-decoration:underline; }
+footer .fin { margin-left:auto; color:var(--tenue); font-size:12.5px; }
+footer svg { width:15px; height:15px; fill:currentColor; }
+
+/* ---------- diagnostico ---------- */
+#diag { display:none; margin-bottom:26px; padding:18px 22px; border-radius:var(--r-m);
+        border:1px solid rgba(255,107,122,.45); background:rgba(255,107,122,.11);
+        font-size:14px; }
 #diag.on { display:block; }
-#diag b { display:block; margin-bottom:4px; font-size:15px; color:var(--err); }
-#diag code {
-  display:block; margin-top:8px; padding:10px 12px; border-radius:10px;
-  background:rgba(0,0,0,.32); font-family:var(--mono); font-size:12px;
-  white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto;
-}
+#diag b { display:block; margin-bottom:5px; font-size:15px; color:var(--error); }
+#diag code { display:block; margin-top:10px; padding:12px; border-radius:11px;
+  background:rgba(0,0,0,.34); font-family:var(--mono); font-size:11.5px;
+  white-space:pre-wrap; max-height:190px; overflow:auto; }
 
-/* ---------- aviso flotante ---------- */
-#aviso {
-  position:fixed; left:50%; bottom:26px; transform:translate(-50%,26px);
-  z-index:5; padding:13px 26px; border-radius:26px;
-  opacity:0; pointer-events:none;
-  transition:opacity .22s ease, transform .28s cubic-bezier(.2,.8,.3,1);
-}
+.entra { animation:entra .5s cubic-bezier(.2,.8,.3,1) both; animation-delay:var(--t,0s); }
+@keyframes entra { from { opacity:0; transform:translateY(18px); } }
+
+#aviso { position:fixed; left:50%; bottom:92px; transform:translate(-50%,20px); z-index:50;
+  padding:13px 26px; border-radius:999px; opacity:0; pointer-events:none;
+  transition:opacity .25s, transform .35s cubic-bezier(.2,.9,.3,1); font-size:14px; }
 #aviso.on { opacity:1; transform:translate(-50%,0); }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::after { animation:none !important; transition:none !important; }
+  *, *::before, *::after { animation:none !important; transition:none !important; }
   #fondo { display:none; }
-}
-@media (max-width:820px) {
-  .app { flex-direction:column; padding:14px; }
-  .dock { flex-direction:row; width:100%; flex:0 0 auto; border-radius:28px; align-self:stretch; }
-  .logo, .estado-dock { display:none; }
+  html { scroll-behavior:auto; }
 }
 </style>
 </head>
 <body>
+
+<!-- El mapa con el que se dobla la luz en los cantos. feTurbulence da un ruido
+     suave y feDisplacementMap desplaza cada pixel del fondo segun ese ruido:
+     eso es lo que hace que el borde parezca tener grosor. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="refraccion" x="-20%" y="-20%" width="140%" height="140%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.012 0.016"
+                  numOctaves="2" seed="9" result="ruido"/>
+    <feGaussianBlur in="ruido" stdDeviation="2.4" result="suave"/>
+    <feDisplacementMap in="SourceGraphic" in2="suave" scale="26"
+                       xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
+
 <canvas id="fondo" aria-hidden="true"></canvas>
 
-<div class="app">
-  <nav class="dock glass" aria-label="Secciones">
-    <img class="logo" src="/logo.png?t=__TOKEN__" alt="">
-    <button class="nav on" data-sec="juegos">
-      <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>Juegos</button>
-    <button class="nav" data-sec="estado">
-      <svg viewBox="0 0 24 24"><path d="M4 13h4v7H4zm6-9h4v16h-4zm6 5h4v11h-4z"/></svg>Estado</button>
-    <button class="nav" data-sec="emuladores">
-      <svg viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zm5 13h6v2H9z"/></svg>Emuladores</button>
-    <button class="nav" data-sec="ajustes">
-      <svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm14 0h4v2h-4zM3 11h4v2H3zm6 0h12v2H9zM3 16h12v2H3zm14 0h4v2h-4z"/></svg>Ajustes</button>
-    <button class="nav" data-sec="copias">
-      <svg viewBox="0 0 24 24"><path d="M4 4h6l2 2h8a1 1 0 011 1v11a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z"/></svg>Copias</button>
-    <button class="nav" data-sec="registro">
-      <svg viewBox="0 0 24 24"><path d="M5 3h9l5 5v13a1 1 0 01-1 1H5a1 1 0 01-1-1V4a1 1 0 011-1zm3 9h8v2H8zm0 4h8v2H8z"/></svg>Registro</button>
-    <div class="estado-dock">
-      <div class="punto" id="punto"></div>
-      <span id="dock-estado">listo</span>
+<div class="pagina">
+  <header class="v">
+    <div class="marca">
+      <img src="/logo.png?t=__TOKEN__" alt="">
+      <div><b>NX Save Sync</b><small>por Angelpro09_Dev</small></div>
     </div>
-  </nav>
-
-  <main>
-    <div class="cabecera">
-      <div>
-        <h1 id="titulo">Juegos</h1>
-        <p>NX Save Sync · Angelpro09_Dev</p>
-      </div>
-      <div class="chips glass">
-        <div class="chip"><b>PC</b><span id="c-pc">…</span></div>
-        <div class="chip"><b>Emulador</b><span id="c-emu">…</span></div>
-        <div class="chip"><b>Escuchando</b><span id="c-red">…</span></div>
-      </div>
+    <div class="pastillas">
+      <div class="pastilla opc"><span>PC</span> <b id="p-pc">…</b></div>
+      <div class="pastilla"><span>Emulador</span> <b id="p-emu">…</b></div>
+      <div class="pastilla opc"><span>Escuchando</span> <b id="p-red">…</b></div>
     </div>
+  </header>
 
-    <div id="diag"></div>
+  <div id="diag"></div>
 
-    <div class="hoja glass">
-      <section id="s-estado">
-        <h2>Estado</h2>
-        <p class="ayuda">Lo que ha hecho el daemon desde que arrancó.</p>
-        <div class="cifras" id="cifras"></div>
-        <div id="stats"></div>
-        <div class="acciones">
-          <button class="btn pri" data-accion="rescan">Volver a buscar emuladores</button>
-          <button class="btn" data-accion="copias">Abrir carpeta de copias</button>
-        </div>
-      </section>
-
-      <section id="s-juegos" class="on">
-        <h2>Juegos</h2>
-        <p class="ayuda">Lo que ha pasado con cada partida. Las carátulas las
-        manda la consola la primera vez que sincroniza cada juego.</p>
-        <div class="juegos">
-          <div class="rejilla" id="rejilla"></div>
-          <div class="detalle glass" id="detalle"></div>
-        </div>
-      </section>
-
-      <section id="s-emuladores">
-        <h2>Emuladores</h2>
-        <p class="ayuda">Los que se han encontrado en este PC. Puedes dejar alguno fuera.</p>
-        <div id="emus"></div>
-      </section>
-
-      <section id="s-ajustes">
-        <h2>Ajustes</h2>
-        <p class="ayuda">Los mismos que ves desde la consola: no hay dos listas que puedan discrepar.</p>
-        <div id="ajustes"></div>
-      </section>
-
-      <section id="s-copias">
-        <h2>Copias de seguridad</h2>
-        <p class="ayuda">Antes de sobrescribir una partida se guarda una copia, con el nombre del juego.</p>
-        <div id="copias"></div>
-        <div class="acciones">
-          <button class="btn" data-accion="copias">Abrir la carpeta</button>
-        </div>
-      </section>
-
-      <section id="s-registro">
-        <h2>Registro</h2>
-        <p class="ayuda">Lo último que ha pasado, en vivo.</p>
-        <pre class="log" id="log">…</pre>
-      </section>
+  <div class="hero v entra">
+    <div class="aro">
+      <svg width="104" height="104">
+        <circle class="pista" cx="52" cy="52" r="45"></circle>
+        <circle class="val" id="aro" cx="52" cy="52" r="45"
+                stroke-dasharray="283" stroke-dashoffset="283"></circle>
+      </svg>
+      <i id="aro-txt">—</i>
     </div>
-  </main>
+    <div class="txt">
+      <h1 id="h-titulo">Comprobando…</h1>
+      <p id="h-sub">Leyendo el estado del programa.</p>
+    </div>
+    <div class="cifras">
+      <div class="cifra"><b id="c-con">0</b><span>Conexiones</span></div>
+      <div class="cifra"><b id="c-arch">0</b><span>Archivos</span></div>
+      <div class="cifra"><b id="c-emu">0</b><span>Emuladores</span></div>
+    </div>
+  </div>
+
+  <section id="juegos" class="entra" style="--t:.05s">
+    <div class="titulo"><h2>Juegos</h2><em id="j-cuenta"></em></div>
+    <div class="tira" id="tira"></div>
+  </section>
+
+  <section id="emuladores" class="entra" style="--t:.1s">
+    <div class="titulo"><h2>Emuladores</h2><em>dónde acaban las partidas</em></div>
+    <div class="grupo v" id="emus"></div>
+  </section>
+
+  <section id="ajustes" class="entra" style="--t:.15s">
+    <div class="titulo"><h2>Ajustes</h2><em>los mismos que ves en la consola</em></div>
+    <div class="grupo v" id="lista-ajustes"></div>
+  </section>
+
+  <section id="copias" class="entra" style="--t:.2s">
+    <div class="titulo"><h2>Copias de seguridad</h2><em id="cop-cuenta"></em></div>
+    <div class="grupo v" id="lista-copias"></div>
+    <div class="acciones">
+      <button class="btn pri" data-accion="copias">Abrir la carpeta</button>
+      <button class="btn" data-accion="rescan">Volver a buscar emuladores</button>
+    </div>
+  </section>
+
+  <section id="registro" class="entra" style="--t:.25s">
+    <div class="titulo"><h2>Registro</h2><em>en vivo</em></div>
+    <pre class="log v" id="log">…</pre>
+  </section>
+
+  <footer class="v">
+    <a href="https://github.com/Angelpro09xd/nxsavesync" target="_blank" rel="noreferrer">
+      <svg viewBox="0 0 16 16"><path d="M8 0a8 8 0 00-2.5 15.6c.4.1.5-.2.5-.4v-1.4C3.8 14.2 3.4 13 3.4 13c-.3-.8-.7-1-.7-1-.6-.4 0-.4 0-.4.7 0 1 .7 1 .7.6 1 1.6.7 2 .6 0-.5.2-.8.4-1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1 0-.2-.3-1 .1-2.1 0 0 .7-.2 2.2.8a7.4 7.4 0 014 0c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.9.1 2.1.5.5.8 1.2.8 2.1 0 3-1.8 3.7-3.6 3.9.3.2.5.7.5 1.4v2.1c0 .2.1.5.5.4A8 8 0 008 0z"/></svg>
+      Código en GitHub</a>
+    <a href="https://github.com/Angelpro09xd/nxsavesync/wiki" target="_blank" rel="noreferrer">
+      <svg viewBox="0 0 16 16"><path d="M2 2h4.5A2.5 2.5 0 019 4.5V14a2 2 0 00-2-1.5H2zm12 0H9.5A2.5 2.5 0 007 4.5V14a2 2 0 012-1.5h5z"/></svg>
+      Manual y guías</a>
+    <a href="https://github.com/Angelpro09xd/nxsavesync/issues" target="_blank" rel="noreferrer">
+      <svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 3a1 1 0 011 1v4a1 1 0 01-2 0V5a1 1 0 011-1zm0 8.5a1.1 1.1 0 110-2.2 1.1 1.1 0 010 2.2z"/></svg>
+      Informar de un fallo</a>
+    <span class="fin" id="version">NX Save Sync</span>
+  </footer>
 </div>
 
-<div id="aviso" class="glass"></div>
+<nav class="tabs v">
+  <a href="#juegos" class="on">Juegos</a>
+  <a href="#emuladores">Emuladores</a>
+  <a href="#ajustes">Ajustes</a>
+  <a href="#copias">Copias</a>
+  <a href="#registro">Registro</a>
+</nav>
+
+<div class="velo" id="velo"></div>
+<div class="hoja v" id="hoja"></div>
+<div id="aviso" class="v"></div>
 
 <script>
 const T = "__TOKEN__";
@@ -405,397 +387,328 @@ async function pide(ruta, cuerpo) {
     : {};
   const r = await fetch(ruta + (ruta.includes("?") ? "&" : "?") + "t=" + T, opt);
 
-  // El cuerpo se lee como texto primero: si el servidor devolvio un error, lo
-  // que llega no es JSON y hay que poder ensenarlo tal cual en vez de tragarse
-  // la excepcion y dejar la pagina en blanco.
+  // Se lee como texto primero: si el servidor devolvio un error, lo que llega
+  // no es JSON y hay que poder ensenarlo tal cual en vez de tragarse la
+  // excepcion y dejar la pagina en blanco.
   const txt = await r.text();
-  try {
-    return JSON.parse(txt);
-  } catch {
-    const e = new Error("respuesta que no es JSON");
-    e.estado = r.status;
-    e.cuerpo = txt.slice(0, 900);
-    throw e;
-  }
+  try { return JSON.parse(txt); }
+  catch { const e = new Error("respuesta que no es JSON");
+          e.estado = r.status; e.cuerpo = txt.slice(0, 900); throw e; }
+}
+
+let avisoT = null;
+function aviso(t) {
+  const el = $("#aviso");
+  el.textContent = t; el.classList.add("on");
+  clearTimeout(avisoT); avisoT = setTimeout(() => el.classList.remove("on"), 3200);
 }
 
 function diagnostico(titulo, detalle, traza) {
-  const el = $("#diag");
-  el.innerHTML = "";
+  const el = $("#diag"); el.innerHTML = "";
   const b = document.createElement("b"); b.textContent = titulo; el.appendChild(b);
   const p = document.createElement("div"); p.textContent = detalle; el.appendChild(p);
   if (traza) { const c = document.createElement("code"); c.textContent = traza; el.appendChild(c); }
   el.classList.add("on");
 }
 
-let avisoTimer = null;
-function aviso(txt) {
-  const el = $("#aviso");
-  el.textContent = txt;
-  el.classList.add("on");
-  clearTimeout(avisoTimer);
-  avisoTimer = setTimeout(() => el.classList.remove("on"), 3200);
-}
+/* ---------- piezas ---------- */
 
-// ---------- secciones ----------
-const TITULOS = { juegos:"Juegos", estado:"Estado", emuladores:"Emuladores",
-                  ajustes:"Ajustes", copias:"Copias", registro:"Registro" };
-
-// La pastilla del dock persigue al elegido. Se mide en vez de calcularse:
-// el dock cambia de forma en pantallas estrechas.
-function mueveDock(b) {
-  const dock = document.querySelector(".dock");
-  const r = b.getBoundingClientRect(), d = dock.getBoundingClientRect();
-  dock.style.setProperty("--nav-y", (r.top - d.top) + "px");
-  dock.style.setProperty("--nav-h", r.height + "px");
-  dock.style.setProperty("--nav-op", "1");
-}
-
-document.querySelectorAll(".nav").forEach((b) => {
-  b.addEventListener("click", () => {
-    document.querySelectorAll(".nav").forEach((o) => o.classList.toggle("on", o === b));
-    mueveDock(b);
-
-    const sec = b.dataset.sec;
-    document.querySelectorAll("section").forEach((s) => {
-      const activa = s.id === "s-" + sec;
-      s.classList.remove("on");
-      if (activa) { void s.offsetWidth; s.classList.add("on"); }   // reinicia la entrada
-    });
-    $("#titulo").textContent = TITULOS[sec];
-  });
-});
-
-addEventListener("load",   () => mueveDock(document.querySelector(".nav.on")));
-addEventListener("resize", () => mueveDock(document.querySelector(".nav.on")));
-
-// Onda desde el punto exacto donde pulsas.
-addEventListener("pointerdown", (e) => {
-  const el = e.target.closest(".btn, .fila, .nav");
-  if (!el) return;
-  const r = el.getBoundingClientRect();
-  const o = document.createElement("span");
-  o.className = "onda";
-  const d = Math.max(r.width, r.height) * 2;
-  o.style.width = o.style.height = d + "px";
-  o.style.left = (e.clientX - r.left) + "px";
-  o.style.top  = (e.clientY - r.top)  + "px";
-  el.appendChild(o);
-  setTimeout(() => o.remove(), 600);
-});
-
-// Reparte el retraso de entrada entre los hijos de un contenedor.
-function escalona(cont) {
-  [...cont.children].forEach((h, i) => h.style.setProperty("--t", (i * 0.045) + "s"));
-}
-
-// Las cifras suben contando en vez de aparecer puestas.
-function cuenta(el, hasta) {
-  const desde = parseInt(el.dataset.v || "0", 10);
-  if (desde === hasta) { el.textContent = hasta; return; }
-  el.dataset.v = hasta;
-
-  const t0 = performance.now(), dur = 600;
-  function paso(t) {
-    const k = Math.min((t - t0) / dur, 1);
-    const suave = 1 - Math.pow(1 - k, 3);
-    el.textContent = Math.round(desde + (hasta - desde) * suave);
-    if (k < 1) requestAnimationFrame(paso);
-  }
-  requestAnimationFrame(paso);
-}
-
-document.querySelectorAll("[data-accion]").forEach((b) => {
-  b.addEventListener("click", async () => {
-    const r = await pide("/api/accion", { accion: b.dataset.accion });
-    aviso(r.msg || (r.ok ? "Hecho" : "No se pudo"));
-    carga();
-  });
-});
-
-// ---------- pintar ----------
 function fila(titulo, ayuda, control) {
-  const d = document.createElement("div");
-  d.className = "fila";
-  const t = document.createElement("div");
-  t.className = "txt";
+  const d = document.createElement("div"); d.className = "fila";
+  const t = document.createElement("div"); t.className = "t";
   const b = document.createElement("b"); b.textContent = titulo; t.appendChild(b);
   if (ayuda) { const s = document.createElement("small"); s.textContent = ayuda; t.appendChild(s); }
   d.appendChild(t);
-  if (control) { const v = document.createElement("div"); v.className = "val"; v.appendChild(control); d.appendChild(v); }
+  if (control) {
+    const v = document.createElement("div"); v.className = "v2";
+    if (typeof control === "string") v.textContent = control; else v.appendChild(control);
+    d.appendChild(v);
+  }
   return d;
 }
 
 function interruptor(activo, alCambiar) {
   const b = document.createElement("button");
-  b.className = "sw";
-  b.setAttribute("role", "switch");
+  b.className = "sw"; b.setAttribute("role", "switch");
   b.setAttribute("aria-checked", activo ? "true" : "false");
   b.addEventListener("click", () => {
-    const nuevo = b.getAttribute("aria-checked") !== "true";
-    b.setAttribute("aria-checked", nuevo ? "true" : "false");
-    alCambiar(nuevo);
+    const n = b.getAttribute("aria-checked") !== "true";
+    b.setAttribute("aria-checked", n ? "true" : "false");
+    alCambiar(n);
   });
   return b;
 }
 
-// Los ajustes no se escriben aquí: vienen del daemon, con la misma forma que
-// se le mandan a la consola.
-function pintaAjustes(items) {
-  const cont = $("#ajustes");
-  cont.innerHTML = "";
+const ESTADOS = {
+  0: ["var(--ok)",    "Al día"],
+  1: ["var(--aviso)", "Cambios en el PC"],
+  2: ["var(--tenue)", "Sin sincronizar"],
+  3: ["var(--error)", "Sin carpeta en el PC"],
+};
 
+function cuenta(el, hasta) {
+  const desde = parseInt(el.dataset.v || "0", 10);
+  if (desde === hasta) { el.textContent = hasta; return; }
+  el.dataset.v = hasta;
+  const t0 = performance.now();
+  requestAnimationFrame(function paso(t) {
+    const k = Math.min((t - t0) / 650, 1), s = 1 - Math.pow(1 - k, 3);
+    el.textContent = Math.round(desde + (hasta - desde) * s);
+    if (k < 1) requestAnimationFrame(paso);
+  });
+}
+
+/* ---------- juegos ---------- */
+
+let JUEGOS = [], FIRMA = "", ULTIMO = null;
+
+function pintaJuegos(l) {
+  // Solo se rehace si cambio algo de verdad. Reconstruir la tira cada cinco
+  // segundos reiniciaba las animaciones y los juegos se quedaban parpadeando a
+  // medio aparecer.
+  const firma = JSON.stringify(l.map((j) => [j.title_id, j.estado, j.cuando, j.caratula]));
+  if (firma === FIRMA) return;
+  FIRMA = firma; JUEGOS = l;
+
+  if (ULTIMO) pintaHero(ULTIMO);          // el aro depende de los juegos
+
+  const tira = $("#tira");
+  tira.innerHTML = "";
+  $("#j-cuenta").textContent = l.length
+      ? l.length + (l.length === 1 ? " juego" : " juegos") : "";
+
+  if (!l.length) {
+    tira.innerHTML = '<p style="color:var(--tenue);font-size:13.5px;padding:10px 6px">'
+      + 'Todavía no hay ninguno. Sincroniza desde la consola y aparecerán aquí, '
+      + 'con su carátula.</p>';
+    return;
+  }
+
+  l.forEach((j, i) => {
+    const b = document.createElement("button");
+    b.className = "juego entra"; b.style.setProperty("--t", (i * .04) + "s");
+    const [col] = ESTADOS[j.estado ?? 2] || ESTADOS[2];
+    b.innerHTML = '<div class="marco">'
+      + (j.caratula ? '<img src="/caratula/' + j.title_id + '.jpg?t=' + T + '" alt="" loading="lazy">'
+                    : '<div class="nada">?</div>')
+      + '<span class="pto" style="color:' + col + '"></span></div>'
+      + '<p></p>';
+    b.querySelector("p").textContent = j.nombre || j.title_id;
+    b.addEventListener("click", () => abreHoja(j));
+    tira.appendChild(b);
+  });
+}
+
+function abreHoja(j) {
+  const [col, txt] = ESTADOS[j.estado ?? 2] || ESTADOS[2];
+  const h = $("#hoja");
+  h.innerHTML = '<div class="asa"></div><div class="cab">'
+    + (j.caratula ? '<img src="/caratula/' + j.title_id + '.jpg?t=' + T + '" alt="">' : "")
+    + '<div><h3 id="h-nom"></h3><p class="tid" id="h-tid"></p>'
+    + '<span class="marca-estado" style="color:' + col + '"><i></i>' + txt + '</span>'
+    + '</div></div><dl id="h-dl"></dl>';
+
+  h.querySelector("#h-nom").textContent = j.nombre || "Sin nombre";
+  h.querySelector("#h-tid").textContent = j.title_id;
+
+  const dl = h.querySelector("#h-dl");
+  const par = (k, v) => {
+    if (v === undefined || v === null || v === "") return;
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.textContent = v;
+    dl.appendChild(dt); dl.appendChild(dd);
+  };
+  par("Última vez", j.cuando_txt);
+  par("Sincronizado", j.veces ? j.veces + (j.veces === 1 ? " vez" : " veces") : "");
+  par("Archivos", j.archivos);
+  par("Emulador", j.emulador);
+  par("Bajados en total", j.total_bajados);
+  par("Subidos en total", j.total_subidos);
+  par("Borrados en total", j.total_borrados);
+  par("Carpeta", j.carpeta);
+
+  h.classList.add("on");
+  $("#velo").classList.add("on");
+}
+
+function cierraHoja() {
+  $("#hoja").classList.remove("on");
+  $("#velo").classList.remove("on");
+}
+$("#velo").addEventListener("click", cierraHoja);
+addEventListener("keydown", (e) => { if (e.key === "Escape") cierraHoja(); });
+
+/* ---------- pintado ---------- */
+
+function pintaEmus(emus, items) {
+  const c = $("#emus"); c.innerHTML = "";
+  if (!emus.length) {
+    c.appendChild(fila("No se ha encontrado ninguno",
+      "Se usará la carpeta de reserva. Prueba a volver a buscar.", null));
+    return;
+  }
+  for (const e of emus) {
+    const hay = items.some((i) => i.key === "emu:" + e.nombre);
+    const sw = interruptor(e.activo, async (v) => {
+      aviso((await pide("/api/set", { clave: "emu:" + e.nombre, valor: v ? "1" : "0" })).msg);
+      carga();
+    });
+    c.appendChild(fila(e.nombre, e.ruta, hay ? sw : null));
+  }
+}
+
+function pintaAjustes(items) {
+  const c = $("#lista-ajustes"); c.innerHTML = "";
   for (const it of items) {
-    if (it.key && it.key.startsWith("emu:")) continue;    // van en su sección
-    let control = null;
+    if (it.key && it.key.startsWith("emu:")) continue;
+    let ctl = null;
 
     if (it.type === 0) {
-      control = interruptor(it.value === "1" || it.value === 1, async (v) => {
-        const r = await pide("/api/set", { clave: it.key, valor: v ? "1" : "0" });
-        aviso(r.msg); carga();
+      ctl = interruptor(it.value === "1" || it.value === 1, async (v) => {
+        aviso((await pide("/api/set", { clave: it.key, valor: v ? "1" : "0" })).msg); carga();
       });
     } else if (it.type === 2 && it.options) {
-      control = document.createElement("select");
+      ctl = document.createElement("select");
       it.options.forEach((o, i) => {
         const op = document.createElement("option");
         op.value = String(i); op.textContent = o;
         if (String(i) === String(it.value)) op.selected = true;
-        control.appendChild(op);
+        ctl.appendChild(op);
       });
-      control.addEventListener("change", async () => {
-        const r = await pide("/api/set", { clave: it.key, valor: control.value });
-        aviso(r.msg); carga();
+      ctl.addEventListener("change", async () => {
+        aviso((await pide("/api/set", { clave: it.key, valor: ctl.value })).msg); carga();
       });
     } else if (it.type === 1) {
-      control = document.createElement("input");
-      control.type = "number"; control.min = "1"; control.value = it.value;
-      control.addEventListener("change", async () => {
-        const r = await pide("/api/set", { clave: it.key, valor: control.value });
-        aviso(r.msg);
+      ctl = document.createElement("input");
+      ctl.type = "number"; ctl.min = "1"; ctl.value = it.value;
+      ctl.addEventListener("change", async () => {
+        aviso((await pide("/api/set", { clave: it.key, valor: ctl.value })).msg);
       });
     } else if (it.type === 4) {
-      control = document.createElement("button");
-      control.className = "btn"; control.textContent = "Hacerlo";
-      control.addEventListener("click", async () => {
-        const r = await pide("/api/set", { clave: it.key, valor: "1" });
-        aviso(r.msg); carga();
+      ctl = document.createElement("button");
+      ctl.className = "btn"; ctl.textContent = "Hacerlo";
+      ctl.addEventListener("click", async () => {
+        aviso((await pide("/api/set", { clave: it.key, valor: "1" })).msg); carga();
       });
     } else {
-      control = document.createElement("span");
-      control.className = "info"; control.textContent = it.value;
+      ctl = it.value;
     }
-
-    cont.appendChild(fila(it.label || it.key, it.help || "", control));
-  }
-  escalona(cont);
-}
-
-function pintaEmus(emus, items) {
-  const cont = $("#emus");
-  cont.innerHTML = "";
-
-  if (!emus.length) {
-    cont.appendChild(fila("No se ha encontrado ningún emulador",
-      "Se usará la carpeta de reserva. Pulsa «Volver a buscar» en Estado.", null));
-    return;
-  }
-
-  for (const e of emus) {
-    const item = items.find((i) => i.key === "emu:" + e.nombre);
-    const sw = interruptor(e.activo, async (v) => {
-      const r = await pide("/api/set", { clave: "emu:" + e.nombre, valor: v ? "1" : "0" });
-      aviso(r.msg); carga();
-    });
-    cont.appendChild(fila(e.nombre, e.ruta, item ? sw : null));
-  }
-  escalona(cont);
-}
-
-function pintaEstado(d) {
-  const s = d.stats || {};
-
-  // Las tres cifras que se miran de un vistazo, arriba y grandes.
-  const cif = $("#cifras");
-  if (!cif.dataset.hecho) {
-    cif.dataset.hecho = "1";
-    cif.innerHTML = `
-      <div class="cifra acento"><b id="c-con">0</b><span>Conexiones de la consola</span></div>
-      <div class="cifra ok"><b id="c-arch">0</b><span>Archivos movidos</span></div>
-      <div class="cifra"><b id="c-emus">0</b><span>Emuladores encontrados</span></div>`;
-    escalona(cif);
-  }
-  cuenta($("#c-con"),  s.conexiones ?? 0);
-  cuenta($("#c-arch"), s.archivos ?? 0);
-  cuenta($("#c-emus"), (d.emuladores || []).length);
-
-  const cont = $("#stats");
-  cont.innerHTML = "";
-  const pares = [
-    ["Última sincronización", s.ultima || "todavía ninguna"],
-    ["Carpeta de copias", d.rutas.copias],
-    ["Carpeta de estado", d.rutas.estado],
-  ];
-  for (const [k, v] of pares) {
-    const sp = document.createElement("span");
-    sp.className = String(v).includes("/") || String(v).includes("\\") ? "ruta" : "info";
-    sp.textContent = String(v);
-    cont.appendChild(fila(k, "", sp));
-  }
-  escalona(cont);
-  if (d.windows) {
-    cont.appendChild(fila("Abrir al iniciar sesión",
-      "Deja el icono junto al reloj listo desde el arranque",
-      interruptor(d.inicio, async () => {
-        const r = await pide("/api/accion", { accion: "inicio" });
-        aviso(r.msg); carga();
-      })));
+    c.appendChild(fila(it.label || it.key, it.help || "", ctl));
   }
 }
 
 function pintaCopias(cs) {
-  const cont = $("#copias");
-  cont.innerHTML = "";
+  const c = $("#lista-copias"); c.innerHTML = "";
+  $("#cop-cuenta").textContent = cs.length ? cs.length + " guardadas" : "";
   if (!cs.length) {
-    cont.appendChild(fila("Todavía no hay ninguna copia",
+    c.appendChild(fila("Todavía no hay ninguna",
       "Se crean solas justo antes de sobrescribir una partida.", null));
     return;
   }
-  for (const c of cs) {
-    const sp = document.createElement("span");
-    sp.className = "info";
-    sp.textContent = c.archivos + " archivo" + (c.archivos === 1 ? "" : "s");
-    cont.appendChild(fila(c.nombre, c.cuando, sp));
-  }
-  escalona(cont);
+  for (const x of cs)
+    c.appendChild(fila(x.nombre, x.cuando,
+                       x.archivos + (x.archivos === 1 ? " archivo" : " archivos")));
 }
 
-// Los estados que manda el daemon, con su color y su frase.
-const ESTADOS = {
-  0: ["var(--ok)",     "Al día"],
-  1: ["var(--warn)",   "Cambios en el PC"],
-  2: ["var(--dim)",    "Sin sincronizar"],
-  3: ["var(--err)",    "Sin carpeta en el PC"],
-};
+function pintaHero(d) {
+  const s = d.stats || {};
+  cuenta($("#c-con"),  s.conexiones ?? 0);
+  cuenta($("#c-arch"), s.archivos ?? 0);
+  cuenta($("#c-emu"),  (d.emuladores || []).length);
 
-let JUEGOS = [], JSEL = 0;
+  const total  = JUEGOS.length;
+  const bien   = JUEGOS.filter((j) => (j.estado ?? 2) === 0).length;
+  const espera = JUEGOS.filter((j) => (j.estado ?? 2) === 1).length;
 
-function pintaJuegos(lista) {
-  JUEGOS = lista;
-  const rej = $("#rejilla");
-  rej.innerHTML = "";
+  const C = 283, frac = total ? bien / total : 0;
+  const aro = $("#aro");
+  aro.style.strokeDashoffset = C - C * frac;
+  aro.style.stroke = espera ? "var(--aviso)" : "var(--ok)";
+  $("#aro-txt").textContent = total ? bien + "/" + total : "—";
 
-  if (!lista.length) {
-    rej.innerHTML = '<p class="ayuda">Todavía no hay ninguno. Sincroniza desde la '
-                  + 'consola y aparecerán aquí, con su carátula.</p>';
-    $("#detalle").innerHTML = '<div class="vacio">Nada que enseñar todavía.</div>';
+  if (!total) {
+    $("#h-titulo").textContent = "Sin juegos todavía";
+    $("#h-sub").textContent = "Sincroniza desde la consola y aparecerán aquí.";
+  } else if (espera) {
+    $("#h-titulo").textContent = espera === 1 ? "1 juego espera" : espera + " juegos esperan";
+    $("#h-sub").textContent = "Tienen cambios en el PC sin llevar a la consola.";
+  } else {
+    $("#h-titulo").textContent = "Todo al día";
+    $("#h-sub").textContent = "Las partidas del PC y las de la consola coinciden.";
+  }
+}
+
+/* ---------- carga ---------- */
+
+async function carga() {
+  let d;
+  try { d = await pide("/api/estado"); }
+  catch (e) {
+    diagnostico("No se pudo hablar con el programa",
+      e.estado ? "El servidor respondió " + e.estado + "."
+               : "No respondió. Puede que se haya cerrado.",
+      e.cuerpo || String(e));
     return;
   }
 
-  lista.forEach((j, i) => {
-    const c = document.createElement("div");
-    c.className = "carta" + (i === JSEL ? " on" : "");
-    c.style.setProperty("--t", (i * 0.035) + "s");
+  if (d.error) { diagnostico("El programa falló al montar el estado", d.error, d.traza); return; }
 
-    const [col] = ESTADOS[j.estado ?? 2] || ESTADOS[2];
-    c.innerHTML = (j.caratula
-        ? `<img src="/caratula/${j.title_id}.jpg?t=${T}" alt="" loading="lazy">`
-        : `<div class="sin">?</div>`)
-      + `<span class="pto" style="color:${col}"></span>`
-      + `<p>${(j.nombre || j.title_id)}</p>`;
+  const g = d.diag || {};
+  if (!g.rt) {
+    diagnostico("El daemon no está en marcha",
+      "El menú funciona, pero el programa que habla con la consola no ha arrancado, "
+      + "así que no hay datos que enseñar. Suele ser un fallo al detectar los "
+      + "emuladores o un puerto ocupado.", g.error || "");
+  } else {
+    $("#diag").classList.remove("on");
+  }
 
-    c.addEventListener("click", () => { JSEL = i; pintaJuegos(JUEGOS); });
-    rej.appendChild(c);
-  });
+  $("#p-pc").textContent  = d.nombre || "—";
+  $("#p-emu").textContent = d.emulador || "ninguno";
+  $("#p-red").textContent = (d.ips[0] || "127.0.0.1") + ":" + d.puerto;
 
-  pintaDetalle(lista[Math.min(JSEL, lista.length - 1)]);
-}
+  pintaEmus(d.emuladores || [], d.ajustes || []);
+  pintaAjustes(d.ajustes || []);
+  pintaCopias(d.copias || []);
+  $("#log").textContent = (d.registro || []).join("\n") || "Todavía no hay nada.";
+  ULTIMO = d;
+  pintaHero(d);
 
-function pintaDetalle(j) {
-  const d = $("#detalle");
-  if (!j) { d.innerHTML = '<div class="vacio">Elige un juego.</div>'; return; }
-
-  const [col, txt] = ESTADOS[j.estado ?? 2] || ESTADOS[2];
-  const fila = (k, v) => v === undefined || v === null || v === ""
-      ? "" : `<dt>${k}</dt><dd>${v}</dd>`;
-
-  d.innerHTML =
-    (j.caratula ? `<img class="port" src="/caratula/${j.title_id}.jpg?t=${T}" alt="">` : "")
-    + `<h3>${j.nombre || "Sin nombre"}</h3>`
-    + `<p class="sub">${j.title_id}</p>`
-    + `<span class="pill" style="color:${col}"><i></i>${txt}</span>`
-    + "<dl>"
-    + fila("Última vez", j.cuando_txt)
-    + fila("Sincronizado", j.veces ? j.veces + (j.veces === 1 ? " vez" : " veces") : "")
-    + fila("Archivos", j.archivos)
-    + fila("Emulador", j.emulador)
-    + fila("Bajados en total", j.total_bajados)
-    + fila("Subidos en total", j.total_subidos)
-    + fila("Borrados en total", j.total_borrados)
-    + "</dl>";
+  const v = (d.ajustes || []).find((i) => i.key === "version");
+  $("#version").textContent = "NX Save Sync" + (v ? " " + v.value : "");
 }
 
 async function cargaJuegos() {
   try {
     const l = await pide("/api/juegos");
     if (Array.isArray(l)) pintaJuegos(l);
-  } catch { /* el banner ya lo cuenta */ }
+  } catch { /* el diagnostico ya lo cuenta */ }
 }
 
-async function carga() {
-  let d;
-  try {
-    d = await pide("/api/estado");
-  } catch (e) {
-    $("#dock-estado").textContent = "sin daemon";
-    $("#punto").style.background = "var(--err)";
-    diagnostico("No se pudo hablar con el programa",
-      e.estado ? `El servidor respondio ${e.estado}.` :
-                 "No respondio. Puede que se haya cerrado.",
-      e.cuerpo || String(e));
-    return;
-  }
+document.querySelectorAll("[data-accion]").forEach((b) => {
+  b.addEventListener("click", async () => {
+    const r = await pide("/api/accion", { accion: b.dataset.accion });
+    aviso(r.msg || (r.ok ? "Hecho" : "No se pudo")); carga();
+  });
+});
 
-  if (d.error) {
-    diagnostico("El programa fallo al montar el estado", d.error, d.traza);
-    return;
-  }
+// La pestana activa sigue a lo que estas mirando.
+const tabs = [...document.querySelectorAll("nav.tabs a")];
+const vigia = new IntersectionObserver((es) => {
+  es.forEach((e) => {
+    if (!e.isIntersecting) return;
+    tabs.forEach((a) => a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id));
+  });
+}, { rootMargin: "-45% 0px -50% 0px" });
+document.querySelectorAll("section[id]").forEach((s) => vigia.observe(s));
 
-  // El caso mas habitual con diferencia: el daemon no llego a arrancar, y
-  // entonces no hay nada que ensenar. Decirlo es mas util que quedarse vacio.
-  const g = d.diag || {};
-  if (!g.rt) {
-    diagnostico("El daemon no esta en marcha",
-      "El menu funciona, pero el programa que habla con la consola no ha "
-      + "arrancado, asi que no hay datos que ensenar. Suele ser un fallo al "
-      + "detectar los emuladores o un puerto ocupado. Mira el registro.",
-      g.error || "");
-  } else if (g.error) {
-    diagnostico("Hubo un fallo", g.error, "");
-  } else {
-    $("#diag").classList.remove("on");
-  }
-
-  $("#c-pc").textContent = d.nombre;
-  $("#c-emu").textContent = d.emulador || "ninguno";
-  $("#c-red").textContent = (d.ips[0] || "127.0.0.1") + ":" + d.puerto;
-  $("#punto").style.background = d.emulador ? "var(--ok)" : "var(--warn)";
-  $("#dock-estado").textContent = d.emulador ? "listo" : "sin emulador";
-
-  pintaEstado(d);
-  pintaEmus(d.emuladores || [], d.ajustes || []);
-  pintaAjustes(d.ajustes || []);
-  pintaCopias(d.copias || []);
-  $("#log").textContent = (d.registro || []).join("\n") || "Todavía no hay nada.";
-}
-
-carga();
-cargaJuegos();
+carga(); cargaJuegos();
 setInterval(() => { carga(); cargaJuegos(); }, 5000);
 
-// ---------- el fondo vivo, como en la consola ----------
+/* ---------- el fondo ---------- */
 (function () {
   const c = $("#fondo");
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const ctx = c.getContext("2d");
   let w = 0, h = 0;
   const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -805,34 +718,31 @@ setInterval(() => { carga(); cargaJuegos(); }, 5000);
     c.width = w * dpr; c.height = h * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  addEventListener("resize", medir);
-  medir();
+  addEventListener("resize", medir); medir();
 
-  // El acento y dos hermanos suyos, rotando los canales.
   const base = [74, 216, 230];
-  const manchas = [
-    { x:.24, y:.18, sx:.041, sy:.033, ph:0,   a:.30, col:base },
-    { x:.78, y:.66, sx:.029, sy:.047, ph:2.1, a:.22, col:[base[2],base[0],base[1]] },
-    { x:.52, y:.90, sx:.037, sy:.025, ph:4.3, a:.16, col:[base[1],base[2],base[0]] },
+  const m = [
+    { x:.20, y:.14, sx:.043, sy:.031, p:0,   a:.34, c:base },
+    { x:.80, y:.60, sx:.027, sy:.049, p:2.1, a:.26, c:[base[2],base[0],base[1]] },
+    { x:.50, y:.92, sx:.038, sy:.024, p:4.3, a:.19, c:[base[1],base[2],base[0]] },
   ];
 
-  function frame(t) {
+  requestAnimationFrame(function frame(t) {
     t /= 1000;
     ctx.clearRect(0, 0, w, h);
-    for (const m of manchas) {
-      const cx = (m.x + Math.sin(t * m.sx + m.ph) * .10) * w;
-      const cy = (m.y + Math.cos(t * m.sy + m.ph) * .08) * h;
-      const r = Math.max(w, h) * .42;
+    for (const b of m) {
+      const cx = (b.x + Math.sin(t * b.sx + b.p) * .11) * w;
+      const cy = (b.y + Math.cos(t * b.sy + b.p) * .09) * h;
+      const r = Math.max(w, h) * .46;
       const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-      g.addColorStop(0,  `rgba(${m.col.join(",")},${m.a})`);
-      g.addColorStop(.55,`rgba(${m.col.join(",")},${m.a * .3})`);
-      g.addColorStop(1,  `rgba(${m.col.join(",")},0)`);
+      g.addColorStop(0,  "rgba(" + b.c.join(",") + "," + b.a + ")");
+      g.addColorStop(.5, "rgba(" + b.c.join(",") + "," + (b.a * .32) + ")");
+      g.addColorStop(1,  "rgba(" + b.c.join(",") + ",0)");
       ctx.fillStyle = g;
       ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
     }
     requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
+  });
 })();
 </script>
 </body>
