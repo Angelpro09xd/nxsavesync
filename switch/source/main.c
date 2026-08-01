@@ -25,7 +25,7 @@
 #include "discovery.h"
 #include "notify.h"
 
-#define APP_VERSION "4.7"
+#define APP_VERSION "4.8"
 
 #define LOG_LINES 10
 #define VIEW_MAX  512

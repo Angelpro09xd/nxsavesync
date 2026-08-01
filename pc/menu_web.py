@@ -451,6 +451,16 @@ class MenuWeb:
                 abrir_en_explorador(self.daemon.backups_dir())
                 return {"ok": True, "msg": "Carpeta de copias abierta"}
 
+            if que == "sincronizar":
+                # El PC no puede empezar una sincronizacion por su cuenta: la
+                # consola es siempre quien abre la conexion. Lo que si puede es
+                # dar un toque por la red para que el sysmodule lo haga ya, en
+                # vez de esperar a su repaso.
+                self.daemon.send_nudge("desde el menu del PC")
+                return {"ok": True,
+                        "msg": "Aviso enviado a la consola. Si tiene el segundo "
+                               "plano activado, sincronizara en unos segundos."}
+
             if que == "inicio":
                 self.tray.alterna_autoarranque()
                 return {"ok": True,
