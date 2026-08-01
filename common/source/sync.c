@@ -93,6 +93,37 @@ bool sync_hello(net_t *n, sync_ui_t *ui, char *server_out, size_t server_size,
     return true;
 }
 
+bool sync_profile(net_t *n, AccountUid uid, const char *name,
+                  const void *avatar, size_t avatar_len, u8 emu,
+                  char *msg, size_t msg_size)
+{
+    if (msg) msg[0] = '\0';
+
+    net_begin(n, OP_PROFILE);
+    w_uid(n, uid);
+    net_w_str(n, name ? name : "");
+    net_w_u8(n, emu);
+
+    // La foto va con su longitud delante. Puede no haberla: hay perfiles sin
+    // imagen, y el emulador pondra la suya por defecto.
+    net_w_u32(n, (u32)avatar_len);
+    if (avatar_len) net_w_bytes(n, avatar, avatar_len);
+
+    if (!net_send(n)) return false;
+
+    u8 op;
+    if (!net_recv(n, &op)) return false;
+    if (op != OP_PROFILE_RES) return false;
+
+    u8 ok = 0;
+    char texto[256] = "";
+    if (!net_r_u8(n, &ok)) return false;
+    net_r_str(n, texto, sizeof(texto));
+
+    if (msg) snprintf(msg, msg_size, "%s", texto);
+    return ok != 0;
+}
+
 bool sync_emus(net_t *n, emu_info_t *out, size_t max, size_t *out_n)
 {
     *out_n = 0;

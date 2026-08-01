@@ -13,6 +13,7 @@
 
 #define TESLA_INIT_IMPL
 #include <tesla.hpp>
+#include "aviso.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -29,18 +30,26 @@ const char *ULTIMA    = "/switch/nxsavesync/ultima-sync.txt";
 const char *AHORA     = "/switch/nxsavesync/sync-ahora";
 const char *APAGADO   = "/switch/nxsavesync/fondo-apagado";
 
+// En un overlay la SD NO esta montada: libtesla la monta y la desmonta
+// alrededor de cada acceso. Hacer fopen a pelo devuelve siempre NULL, en
+// silencio, y el panel se quedaba sin datos sin dar ninguna pista.
 bool existe(const char *ruta) {
-    FILE *f = fopen(ruta, "rb");
-    if (!f) return false;
-    fclose(f);
-    return true;
+    bool hay = false;
+    tsl::hlp::doWithSDCardHandle([&] {
+        FILE *f = fopen(ruta, "rb");
+        if (!f) return;
+        hay = true;
+        fclose(f);
+    });
+    return hay;
 }
 
 // Lee un archivo de "clave=valor" por lineas.
 std::map<std::string, std::string> lee_ini(const char *ruta) {
     std::map<std::string, std::string> out;
+    tsl::hlp::doWithSDCardHandle([&] {
     FILE *f = fopen(ruta, "r");
-    if (!f) return out;
+    if (!f) return;
 
     char linea[256];
     while (fgets(linea, sizeof(linea), f)) {
@@ -53,6 +62,7 @@ std::map<std::string, std::string> lee_ini(const char *ruta) {
         out[linea] = v;
     }
     fclose(f);
+    });
     return out;
 }
 
@@ -66,8 +76,9 @@ int entero(const std::map<std::string, std::string> &m, const char *k, int def =
 // porque son cuatro lineas; no compensa nada mas fino.
 bool escribe_clave(const char *clave, const char *valor) {
     std::vector<std::string> lineas;
-    bool encontrada = false;
+    bool encontrada = false, ok = false;
 
+    tsl::hlp::doWithSDCardHandle([&] {
     FILE *f = fopen(CFG_FILE, "r");
     if (f) {
         char l[256];
@@ -87,10 +98,12 @@ bool escribe_clave(const char *clave, const char *valor) {
     if (!encontrada) lineas.push_back(std::string(clave) + "=" + valor);
 
     f = fopen(CFG_FILE, "w");
-    if (!f) return false;
+    if (!f) return;
     for (const auto &s : lineas) fprintf(f, "%s\n", s.c_str());
     fclose(f);
-    return true;
+    ok = true;
+    });
+    return ok;
 }
 
 // Hace cuanto, en texto corto.
@@ -172,7 +185,7 @@ public:
             escribe_clave("fondo", activo ? "1" : "0");
             // El interruptor de emergencia manda sobre el ajuste, asi que al
             // activar desde aqui hay que quitarlo o no serviria de nada.
-            if (activo) remove(APAGADO);
+            if (activo) tsl::hlp::doWithSDCardHandle([] { remove(APAGADO); });
         });
         lista->addItem(tog);
 
@@ -181,12 +194,14 @@ public:
         m_sincronizar->setClickListener([this](u64 keys) {
             if (!(keys & HidNpadButton_A)) return false;
 
-            mkdir(CFG_DIR, 0777);
-            FILE *f = fopen(AHORA, "w");
-            if (f) {
-                fputs("1\n", f);
-                fclose(f);
-            }
+            tsl::hlp::doWithSDCardHandle([] {
+                mkdir(CFG_DIR, 0777);
+                FILE *f = fopen(AHORA, "w");
+                if (f) {
+                    fputs("1\n", f);
+                    fclose(f);
+                }
+            });
 
             // Con un juego abierto no se toca ningun savedata: se queda pedido
             // y el sysmodule lo hara en cuanto salgas.
@@ -229,9 +244,21 @@ class OverlayNXSaveSync : public tsl::Overlay {
 public:
     virtual void initServices() override {
         timeInitialize();
+
+        // Marca de arranque. Si esta linea no aparece en el registro, es que
+        // este overlay no se esta ejecutando siquiera: el problema estaria en
+        // el cargador, no en nuestro codigo.
+        tsl::hlp::doWithSDCardHandle([] {
+            mkdir(CFG_DIR, 0777);
+            FILE *f = fopen("/switch/nxsavesync/aviso.log", "a");
+            if (!f) return;
+            fprintf(f, "--- overlay arrancado ---\n");
+            fclose(f);
+        });
     }
 
     virtual void exitServices() override {
+        nxss_aviso_exit();
         timeExit();
     }
 

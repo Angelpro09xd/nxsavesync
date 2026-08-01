@@ -174,6 +174,11 @@ int  scr_game_opts(const scr_ctx_t *c, const ui_input_t *in, const scr_game_t *g
 int  scr_pc_cfg(const scr_ctx_t *c, const ui_input_t *in, const char *server,
                 const scr_row_t *rows, int n, int sel, bool ok, float anim);
 
+// Elegir de una lista. Devuelve el indice tocado, o -1.
+int  scr_pick(const scr_ctx_t *c, const ui_input_t *in, const char *titulo,
+              const char *ayuda, const char *const *opciones,
+              const char *const *detalles, int n, int sel, float anim);
+
 void scr_sync(const scr_ctx_t *c, const char *title, const char *now,
               const char (*log)[160], int log_n,
               float progress, bool finished, float anim);

@@ -37,6 +37,13 @@ typedef struct {
     u8 auto_discover;   // buscar hosts por broadcast al arrancar
     u8 sounds;          // efectos de sonido de la interfaz
     u8 music;           // musica ambiental de fondo
+
+    // Aviso sobre el menu HOME, dibujado por el overlay. La posicion se guarda
+    // porque la barra de abajo del menu cambia de contenido segun el contexto
+    // y puede hacer falta apartarlo.
+    u8  aviso;          // 1 = mostrarlo
+    u16 aviso_x;        // esquina superior izquierda, en pixeles de 1280x720
+    u16 aviso_y;
     u8 ask_incoming;    // preguntar cuando el PC trae cambios
 
     // Sysmodule. Apagado por defecto a proposito: es un proceso que corre

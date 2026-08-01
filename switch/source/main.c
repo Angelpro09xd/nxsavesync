@@ -25,7 +25,7 @@
 #include "discovery.h"
 #include "notify.h"
 
-#define APP_VERSION "4.3"
+#define APP_VERSION "4.4"
 
 #define LOG_LINES 10
 #define VIEW_MAX  512
@@ -89,6 +89,8 @@ static scr_host_t g_vhosts[SET_MAX_HOSTS];
 static scr_emu_t  g_vemus[SYNC_MAX_EMUS];
 
 static void pccfg_fetch(void);
+static void clona_perfil(void);
+static const char *subtitle_for(void);
 
 // --------------------------------------------------------------------------
 // utilidades
@@ -477,6 +479,30 @@ static bool connect_now(net_t *n, bool quiet)
     return true;
 }
 
+// Deja en la SD como estan las cosas, para que el overlay pueda avisar sobre el
+// menu HOME sin hablar con nadie. Lo escribe tambien el sysmodule tras cada
+// pasada, asi que el aviso sigue al dia aunque no abras la app.
+static void publica_estado(void)
+{
+    estado_t e;
+    memset(&e, 0, sizeof(e));
+
+    for (size_t i = 0; i < g_games.n; i++) {
+        game_t *g = &g_games.v[i];
+        if (settings_excluded(g->application_id)) continue;
+        if (g->state != SUM_PC_CHANGED) continue;
+
+        e.pendientes++;
+        if (e.n < ESTADO_MAX_JUEGOS) {
+            snprintf(e.nombre[e.n], sizeof(e.nombre[0]), "%s", g->name);
+            e.estado[e.n] = g->state;
+            e.n++;
+        }
+    }
+
+    estado_write(&e);
+}
+
 static void refresh_states(void)
 {
     if (g_games.n == 0) return;
@@ -501,6 +527,8 @@ static void refresh_states(void)
     free(st);
     free(em);
     net_close(&n);
+
+    publica_estado();
 }
 
 // Espera a que el usuario cierre la hoja de sincronizacion.
@@ -692,6 +720,8 @@ static void input_users(const ui_input_t *in)
         toast(now ? "Perfil compartido" : "Perfil fuera de la sincronizacion");
     }
 
+    if (in->down & HidNpadButton_Y) { audio_play(SND_SELECT); clona_perfil(); return; }
+
     if (in->down & HidNpadButton_A) {
         if ((size_t)g_row_sel != g_user_sel) {
             g_user_sel = (size_t)g_row_sel;
@@ -702,6 +732,106 @@ static void input_users(const ui_input_t *in)
             g_view_in = 0.0f;
         }
     }
+}
+
+// --------------------------------------------------------------------------
+// clonar el perfil en el PC
+// --------------------------------------------------------------------------
+//
+// Deja el perfil de la consola dentro del emulador: nombre y foto. Las partidas
+// van despues por la via de siempre, juego a juego, que ya sabe hacer copias de
+// seguridad y resolver conflictos. Meterlo todo en una sola operacion habria
+// significado reimplementar eso, y peor.
+
+// Elige a que emulador. Devuelve el indice, 0xFF para todos, o -1 si se sale.
+static int elige_emulador(void)
+{
+    if (g_emus_n == 0) return -1;
+    if (g_emus_n == 1) return 0;
+
+    const char *op[SYNC_MAX_EMUS + 1];
+    const char *det[SYNC_MAX_EMUS + 1];
+    int n = 0;
+
+    op[n] = "Todos los emuladores";
+    det[n] = "el mismo perfil en todos los activos";
+    n++;
+
+    for (size_t i = 0; i < g_emus_n && n < SYNC_MAX_EMUS + 1; i++) {
+        op[n]  = g_emus[i].name;
+        det[n] = g_emus[i].path;
+        n++;
+    }
+
+    int sel = 0;
+    float anim = 0.0f;
+    int elegido = -2;
+
+    for (;;) {
+        ui_input_t in;
+        if (!ui_frame_begin(&in)) return -1;
+
+        anim = ui_approach(anim, elegido == -2 ? 1.0f : 0.0f, 16.0f);
+
+        scr_ctx_t c = view_ctx();
+        draw_frame(&in, &c, "Perfiles", subtitle_for(), false);
+        scr_hints("A elegir   arriba/abajo mover   B cancelar");
+
+        int hit = scr_pick(&c, &in, "Clonar el perfil", "En que emulador quieres "
+                           "el perfil de la consola", op, det, n, sel, anim);
+
+        ui_ripples_draw();
+        ui_debug_draw();
+        ui_frame_end();
+
+        if (elegido != -2) {
+            if (anim < 0.02f) return elegido == -1 ? -1 : (elegido == 0 ? 0xFF : elegido - 1);
+            continue;
+        }
+
+        if (hit >= 0 && hit != sel) { sel = hit; audio_play(SND_MOVE); continue; }
+
+        int antes = sel;
+        if (in.down & HidNpadButton_Down) sel = (sel + 1) % n;
+        if (in.down & HidNpadButton_Up)   sel = sel ? sel - 1 : n - 1;
+        if (sel != antes) audio_play(SND_MOVE);
+
+        if ((in.down & HidNpadButton_A) || hit == sel) { audio_play(SND_SELECT); elegido = sel; }
+        if (in.down & HidNpadButton_B) { audio_play(SND_BACK); elegido = -1; }
+    }
+}
+
+static void clona_perfil(void)
+{
+    if (g_users.n == 0) return;
+
+    if (g_emus_n == 0) {
+        audio_play(SND_ERROR);
+        toast("El PC no ha dicho que emuladores tiene");
+        return;
+    }
+
+    int cual = elige_emulador();
+    if (cual < 0) return;
+
+    user_t *u = &g_users.v[g_row_sel];
+
+    for (int i = 0; i < 4; i++) draw_busy("Clonando el perfil en el PC...");
+
+    net_t n;
+    if (!connect_now(&n, false)) { audio_play(SND_ERROR); toast("Sin conexion con el PC"); return; }
+
+    char msg[256] = "";
+    bool ok = sync_profile(&n, u->uid, u->name, u->icon, u->icon_size,
+                           (u8)cual, msg, sizeof(msg));
+    net_close(&n);
+
+    audio_play(ok ? SND_DONE : SND_ERROR);
+    toast("%s", msg[0] ? msg : (ok ? "Perfil clonado" : "No se pudo clonar"));
+
+    // Y ahora las partidas, que es la otra mitad de "clonar el perfil".
+    if (ok && (size_t)g_row_sel == g_user_sel && g_games.n)
+        run_sync(0, g_games.n);
 }
 
 static void do_discovery(bool announce)
@@ -784,7 +914,7 @@ static void input_hosts(const ui_input_t *in)
 // ajustes
 // --------------------------------------------------------------------------
 
-#define SET_ROWS    13
+#define SET_ROWS    14
 #define SET_VISIBLE 6
 
 static const char *SET_LABELS[SET_ROWS] = {
@@ -795,6 +925,7 @@ static const char *SET_LABELS[SET_ROWS] = {
     "Buscar PCs al arrancar",
     "Sonidos",
     "Musica de fondo",
+    "Aviso en el menu HOME",
     "Segundo plano (sysmodule)",
     "Ante un conflicto en segundo plano",
     "Sincronizar cuando el PC avise",
@@ -811,6 +942,7 @@ static const char *SET_HELPS[SET_ROWS] = {
     "Descubrimiento por la red local",
     "Efectos de la interfaz",
     "Ambiente sintetizado, a juego con la interfaz",
+    "Que juegos esperan algo, sin abrir nada (necesita el overlay)",
     "Sincroniza sin abrir la app, al cerrar cada juego",
     "Sin nadie delante no se puede preguntar",
     "Al terminar de jugar en el emulador, sin esperar al repaso",
@@ -828,18 +960,19 @@ static int build_settings(scr_row_t *r, char (*vals)[96])
     snprintf(vals[4],  96, "%s", g_set.auto_discover ? "Si" : "No");
     snprintf(vals[5],  96, "%s", audio_enabled()     ? "Si" : "No");
     snprintf(vals[6],  96, "%s", audio_music_enabled() ? "Si" : "No");
-    snprintf(vals[7],  96, "%s", g_set.bg_enabled ? "Activado" : "Desactivado");
-    snprintf(vals[8],  96, "%s", policy_label(g_set.bg_policy));
-    snprintf(vals[9],  96, "%s", g_set.bg_nudge ? "Si" : "No");
-    snprintf(vals[10], 96, "%u min", g_set.bg_interval / 60);
-    snprintf(vals[11], 96, "%s", g_server_name[0] ? g_server_name : "conectar");
-    snprintf(vals[12], 96, "%zu juegos", g_games.n);
+    snprintf(vals[7],  96, "%s", g_set.aviso ? "Si" : "No");
+    snprintf(vals[8],  96, "%s", g_set.bg_enabled ? "Activado" : "Desactivado");
+    snprintf(vals[9],  96, "%s", policy_label(g_set.bg_policy));
+    snprintf(vals[10], 96, "%s", g_set.bg_nudge ? "Si" : "No");
+    snprintf(vals[11], 96, "%u min", g_set.bg_interval / 60);
+    snprintf(vals[12], 96, "%s", g_server_name[0] ? g_server_name : "conectar");
+    snprintf(vals[13], 96, "%zu juegos", g_games.n);
 
     for (int i = 0; i < SET_ROWS; i++) {
         r[i].label  = SET_LABELS[i];
         r[i].help   = SET_HELPS[i];
         r[i].value  = vals[i];
-        r[i].vcolor = (i == 7 && g_set.bg_enabled) ? COL_OK : g_accent;
+        r[i].vcolor = (i == 8 && g_set.bg_enabled) ? COL_OK : g_accent;
     }
     return SET_ROWS;
 }
@@ -872,17 +1005,23 @@ static void input_settings(const ui_input_t *in)
         g_set.music = audio_music_enabled();
         break;
     case 7:
+        g_set.aviso = !g_set.aviso;
+        toast(g_set.aviso
+              ? "Aviso en el menu HOME activado (lo dibuja el overlay)"
+              : "Aviso en el menu HOME desactivado");
+        break;
+    case 8:
         g_set.bg_enabled = !g_set.bg_enabled;
         toast(g_set.bg_enabled
               ? "Segundo plano activado (necesita el sysmodule instalado)"
               : "Segundo plano desactivado");
         break;
-    case 8:
+    case 9:
         // Sin nadie delante, "preguntar" no es una opcion: se salta el juego.
         g_set.bg_policy = policy_next(g_set.bg_policy, false);
         break;
-    case 9: g_set.bg_nudge = !g_set.bg_nudge; break;
-    case 10: {
+    case 10: g_set.bg_nudge = !g_set.bg_nudge; break;
+    case 11: {
         int min = g_set.bg_interval / 60;
         min = (in->down & HidNpadButton_Left) ? min - 5 : min + 5;
         if (min < 1)  min = 60;
@@ -890,8 +1029,8 @@ static void input_settings(const ui_input_t *in)
         g_set.bg_interval = (u16)(min * 60);
         break;
     }
-    case 11: audio_play(SND_SELECT); modal_open(MODAL_PCCFG); pccfg_fetch(); return;
-    case 12:
+    case 12: audio_play(SND_SELECT); modal_open(MODAL_PCCFG); pccfg_fetch(); return;
+    case 13:
         audio_play(SND_SELECT);
         if (g_games.n) run_sync(0, g_games.n);
         return;
@@ -1079,7 +1218,8 @@ static const char *hints_for(void)
     switch (g_nav) {
     case NAV_GAMES: return "A sincronizar   Y todos   X opciones   ZL/ZR perfil   "
                            "L/R menu   + salir";
-    case NAV_USERS: return "A usar este perfil   X compartir o no   L/R menu   + salir";
+    case NAV_USERS: return "A usar este perfil   Y clonar en el PC   X compartir o no   "
+                           "L/R menu   + salir";
     case NAV_HOSTS: return "A usar este PC   Y buscar en la red   X anadir por IP   "
                            "L/R menu   + salir";
     default:        return "A cambiar   L/R menu   + salir";
@@ -1089,7 +1229,8 @@ static const char *hints_for(void)
 static const char *subtitle_for(void)
 {
     switch (g_nav) {
-    case NAV_USERS: return "Cada perfil se sincroniza por separado. Puedes dejar alguno fuera.";
+    case NAV_USERS: return "Cada perfil se sincroniza por separado. Con Y se clona entero "
+                           "en el emulador: nombre, foto y partidas.";
     case NAV_HOSTS: return "Se buscan solos por la red. Tambien puedes anadir uno por IP.";
     case NAV_SETTINGS: return "Los de la consola, y tambien los del PC.";
     default:        return "NX Save Sync  ·  Angelpro09_Dev";

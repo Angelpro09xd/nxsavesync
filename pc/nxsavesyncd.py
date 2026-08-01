@@ -32,7 +32,7 @@ from pathlib import Path
 
 import emulators
 
-PROTO_VERSION = 5
+PROTO_VERSION = 6
 DEFAULT_PORT = 7878
 DISCOVERY_PORT = 7879
 MAX_FRAME = 64 * 1024 * 1024
@@ -59,6 +59,7 @@ OP_DECIDE, OP_DECIDE_RES = 0x09, 0x89
 OP_CFG_GET, OP_CFG_RES = 0x0A, 0x8A
 OP_CFG_SET, OP_CFG_OK = 0x0B, 0x8B
 OP_EMUS_REQ, OP_EMUS_RES = 0x0C, 0x8C   # v5: que emuladores hay en este PC
+OP_PROFILE, OP_PROFILE_RES = 0x0D, 0x8D # v6: clonar el perfil de la consola
 OP_ERROR = 0xFF
 
 ACT_PULL, ACT_PUSH, ACT_DEL_LOCAL, ACT_DEL_REMOTE, ACT_CONFLICT = 0, 1, 2, 3, 4
@@ -307,6 +308,13 @@ class Conn:
 
     def r_uid(self) -> str:
         return uid_str(self.r_u64(), self.r_u64())
+
+    def r_bytes(self) -> bytes:
+        """Un bloque con su longitud delante. Para la foto del perfil."""
+        n = self.r_u32()
+        if n > 4 * 1024 * 1024:
+            raise ClientError(f"bloque de {n} bytes, demasiado grande")
+        return self.take(n) if n else b""
 
     def r_str(self) -> str:
         (n,) = struct.unpack("<H", self.take(2))
@@ -849,6 +857,47 @@ class Session:
 
         self.conn.send(OP_SUMMARY_RES, body)
 
+    def on_profile(self) -> None:
+        """Deja el perfil de la consola dentro de uno o varios emuladores.
+
+        Solo la identidad: nombre y foto. Las partidas van despues por la via
+        de siempre, juego a juego, que ya sabe hacer copias de seguridad y
+        resolver conflictos. Mezclarlo todo en una operacion habria significado
+        reimplementar eso peor.
+        """
+        uid = self.conn.r_uid()
+        nombre = self.conn.r_str()
+        cual = self.conn.r_u8()              # indice de emulador, 0xFF = todos
+        avatar = self.conn.r_bytes()
+
+        log(f"clonar perfil: {nombre!r} ({uid[:8]}...) "
+            f"{'en todos' if cual == 0xFF else f'en el emulador {cual}'}"
+            f"{f', foto de {len(avatar)} bytes' if avatar else ', sin foto'}")
+
+        destinos = self.rt.emus if cual == 0xFF else (
+            [self.rt.emus[cual]] if cual < len(self.rt.emus) else [])
+
+        if not destinos:
+            self.conn.send(OP_PROFILE_RES, bytes([0]) + w_str("no hay ese emulador"))
+            return
+
+        hechos, fallos = [], []
+        for emu in destinos:
+            try:
+                hechos.append(emulators.clona_perfil(emu, uid, nombre, avatar or None))
+                log(f"  {hechos[-1]}")
+            except Exception as e:
+                fallos.append(f"{emu.name}: {e}")
+                log(f"  no se pudo en {emu.name}: {e}")
+
+        if hechos:
+            msg = "; ".join(hechos)
+            if fallos:
+                msg += f" (sin hacer: {len(fallos)})"
+            self.conn.send(OP_PROFILE_RES, bytes([1]) + w_str(msg))
+        else:
+            self.conn.send(OP_PROFILE_RES, bytes([0]) + w_str("; ".join(fallos)))
+
     def on_emus_req(self) -> None:
         """Los emuladores que hay en este PC, para poder verlos en la consola."""
         emus = self.rt.emus
@@ -1146,6 +1195,7 @@ class Session:
         OP_CFG_GET: on_cfg_get,
         OP_CFG_SET: on_cfg_set,
         OP_EMUS_REQ: on_emus_req,
+        OP_PROFILE: on_profile,
         OP_PLAN_REQ: on_plan_req,
         OP_RESOLVE: on_resolve,
         OP_PULL_REQ: on_pull_req,

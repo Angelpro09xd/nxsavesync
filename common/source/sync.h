@@ -67,6 +67,13 @@ typedef struct {
     bool active;      // false = el usuario lo dejo fuera de la sincronizacion
 } emu_info_t;
 
+// Clona el perfil de la consola en el PC: nombre y foto. Las partidas van
+// aparte, por la via de siempre. `emu` es el indice de emulador, o 0xFF para
+// todos los activos.
+bool sync_profile(net_t *n, AccountUid uid, const char *name,
+                  const void *avatar, size_t avatar_len, u8 emu,
+                  char *msg, size_t msg_size);
+
 // Lista de emuladores del PC. Devuelve false si el PC no la da.
 bool sync_emus(net_t *n, emu_info_t *out, size_t max, size_t *out_n);
 

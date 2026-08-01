@@ -68,8 +68,30 @@ class MenuWeb:
         self.httpd: ThreadingHTTPServer | None = None
         self.puerto = 0
         self.registro: deque[str] = deque(maxlen=MAX_REGISTRO)
+        self.ultimo_error: str = ""
+        self.ultima_traza: str = ""
 
         self._engancha_registro()
+
+    # -- fallos ---------------------------------------------------------------
+
+    def anota_fallo(self, contexto: str) -> None:
+        """Deja el fallo en el registro y guardado para poder ensenarlo."""
+        import traceback
+        self.ultima_traza = traceback.format_exc()
+        primera = self.ultima_traza.strip().splitlines()[-1] if self.ultima_traza else "?"
+        self.ultimo_error = f"{contexto}: {primera}"
+        self.registro.append(f"{datetime.now():%H:%M:%S}  FALLO {self.ultimo_error}")
+
+        try:
+            import nxsavesyncd as d
+            f = d.STATE_DIR / "menu-fallos.log"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            with open(f, "a", encoding="utf-8") as fh:
+                fh.write(f"\n=== {datetime.now():%Y-%m-%d %H:%M:%S}  {contexto} ===\n")
+                fh.write(self.ultima_traza)
+        except Exception:
+            pass
 
     # -- registro ------------------------------------------------------------
 
@@ -125,8 +147,22 @@ class MenuWeb:
                 self.wfile.write(cuerpo)
 
             def _json(self, obj, code=200):
+                # `default=str` es una red, no una excusa: un objeto que se
+                # cuele sale como texto en vez de tumbar la pagina entera. Un
+                # dato mal formateado es un problema; un menu en blanco sin
+                # explicacion es otro mucho peor.
                 self._responde(code, "application/json; charset=utf-8",
-                               json.dumps(obj, ensure_ascii=False).encode())
+                               json.dumps(obj, ensure_ascii=False,
+                                          default=str).encode())
+
+            # Cualquier fallo del servidor acaba en el registro Y en la
+            # respuesta. Un menu que se queda en blanco sin decir por que es
+            # imposible de arreglar a distancia.
+            def handle_one_request(self):
+                try:
+                    super().handle_one_request()
+                except Exception:
+                    menu.anota_fallo("atendiendo " + str(self.path))
 
             def do_GET(self):
                 ruta = self.path.split("?")[0]
@@ -154,7 +190,12 @@ class MenuWeb:
                         self._responde(404, "text/plain", b"")
 
                 elif ruta == "/api/estado":
-                    self._json(menu.estado())
+                    try:
+                        self._json(menu.estado())
+                    except Exception as e:
+                        menu.anota_fallo("montando el estado")
+                        self._json({"error": f"{type(e).__name__}: {e}",
+                                    "traza": menu.ultima_traza}, 500)
 
                 else:
                     self._responde(404, "text/plain", b"")
@@ -222,6 +263,16 @@ class MenuWeb:
             self.httpd.shutdown()
             self.httpd = None
 
+    @staticmethod
+    def _cola_del_log(lineas: int = 25) -> str:
+        try:
+            import nxsavesyncd as d
+            texto = (d.STATE_DIR / "nxsavesync.log").read_text(
+                encoding="utf-8", errors="replace")
+        except Exception:
+            return ""
+        return "\n".join(texto.splitlines()[-lineas:])
+
     # -- datos ---------------------------------------------------------------
 
     def estado(self) -> dict:
@@ -239,7 +290,7 @@ class MenuWeb:
             for e in getattr(rt, "emus", []) or []:
                 emus.append({
                     "nombre": e.name,
-                    "ruta": str(getattr(e, "root", "")),
+                    "ruta": str(getattr(e, "base", "") or getattr(e, "root", "")),
                     "activo": bool(self._emu_activo(e)),
                 })
 
@@ -262,11 +313,34 @@ class MenuWeb:
             pass
 
         stats = dict(getattr(rt, "stats", {}) or {})
-        if isinstance(stats.get("ultima"), (int, float)):
-            stats["ultima"] = datetime.fromtimestamp(
-                stats["ultima"]).strftime("%d/%m/%Y %H:%M")
+
+        # El daemon guarda ahi un datetime, no una marca de tiempo. Comprobar
+        # solo int/float dejaba pasar el objeto entero al JSON y tumbaba la
+        # pagina con un TypeError, pero solo si ya habias sincronizado alguna
+        # vez: con "ultima" a None no se notaba.
+        ultima = stats.get("ultima")
+        if isinstance(ultima, datetime):
+            stats["ultima"] = ultima.strftime("%d/%m/%Y %H:%M")
+        elif isinstance(ultima, (int, float)):
+            stats["ultima"] = datetime.fromtimestamp(ultima).strftime("%d/%m/%Y %H:%M")
+
+        # Un resumen de salud que la pagina puede ensenar tal cual. Lo mas
+        # habitual es que el daemon no haya llegado a arrancar, y entonces todo
+        # lo demas sale vacio sin que se sepa por que.
+        diag = {
+            "rt": rt is not None,
+            "emus": len(getattr(rt, "emus", []) or []) if rt else 0,
+            "ajustes": len(ajustes),
+            "error": self.ultimo_error,
+        }
+
+        # Si el daemon no arranco, lo que hace falta es *su* error, no el
+        # nuestro. La bandeja lo deja en su registro; se pesca el final.
+        if rt is None and not diag["error"]:
+            diag["error"] = self._cola_del_log()
 
         return {
+            "diag": diag,
             "nombre": socket.gethostname(),
             "emulador": getattr(rt, "emu_name", "") if rt else "",
             "ips": self._ips(),

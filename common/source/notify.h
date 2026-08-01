@@ -34,3 +34,30 @@ typedef struct {
 
 // Lee el registro. `consume` lo borra tras leerlo, para no repetir el aviso.
 bool notify_read(notify_info_t *out, bool consume);
+
+// --------------------------------------------------------------------------
+// estado para el aviso en pantalla
+// --------------------------------------------------------------------------
+//
+// Un archivo aparte de `ultima-sync.txt`, y por un motivo: aquel se consume al
+// leerlo (es un aviso de una vez), mientras que este describe *como estan las
+// cosas ahora* y lo relee el overlay cada pocos segundos.
+//
+// Lo escriben tanto la app como el sysmodule, y lo lee el overlay para pintar
+// el aviso sobre el menu HOME. Va por archivo y no por red a proposito: el
+// overlay no habla el protocolo ni toca savedata, solo lee la SD.
+
+#define ESTADO_PATH      CFG_DIR "/estado.txt"
+#define ESTADO_MAX_JUEGOS 6
+
+typedef struct {
+    bool valid;
+    int  pendientes;                       // cuantos esperan algo, en total
+    int  n;                                // cuantos vienen nombrados aqui
+    char nombre[ESTADO_MAX_JUEGOS][64];
+    u8   estado[ESTADO_MAX_JUEGOS];        // SUM_*
+    u64  when;
+} estado_t;
+
+void estado_write(const estado_t *e);
+bool estado_read(estado_t *out);

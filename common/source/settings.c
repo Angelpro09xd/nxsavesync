@@ -16,6 +16,10 @@ static void defaults(void)
     g_set.auto_discover = 1;
     g_set.sounds        = 1;
     g_set.music         = 1;
+    g_set.aviso         = 1;
+    // Justo despues del icono de la consola, bajo la linea de la barra.
+    g_set.aviso_x       = 140;
+    g_set.aviso_y       = 660;
     g_set.ask_incoming  = 1;
     g_set.bg_enabled    = 0;
     g_set.bg_policy     = POLICY_SKIP;
@@ -49,6 +53,10 @@ void settings_save(void)
         fprintf(f, "buscar_pcs=%u\n", g_set.auto_discover);
         fprintf(f, "sonidos=%u\n", g_set.sounds);
         fprintf(f, "musica=%u\n", g_set.music);
+        fprintf(f, "\n# Aviso sobre el menu HOME (lo dibuja el overlay)\n");
+        fprintf(f, "aviso=%u\n", g_set.aviso);
+        fprintf(f, "aviso_x=%u\n", g_set.aviso_x);
+        fprintf(f, "aviso_y=%u\n", g_set.aviso_y);
         fprintf(f, "preguntar_si_cambia_pc=%u\n", g_set.ask_incoming);
         fprintf(f, "\n# Sysmodule (sincronizacion en segundo plano)\n");
         fprintf(f, "fondo=%u\n", g_set.bg_enabled);
@@ -133,6 +141,9 @@ void settings_load(void)
         else if (!strcmp(key, "buscar_pcs"))           g_set.auto_discover = (u8)atoi(val);
         else if (!strcmp(key, "sonidos"))              g_set.sounds = (u8)atoi(val);
         else if (!strcmp(key, "musica"))               g_set.music = (u8)atoi(val);
+        else if (!strcmp(key, "aviso"))                g_set.aviso = (u8)atoi(val);
+        else if (!strcmp(key, "aviso_x"))              g_set.aviso_x = (u16)atoi(val);
+        else if (!strcmp(key, "aviso_y"))              g_set.aviso_y = (u16)atoi(val);
         else if (!strcmp(key, "preguntar_si_cambia_pc")) g_set.ask_incoming = (u8)atoi(val);
         else if (!strcmp(key, "fondo"))                g_set.bg_enabled = (u8)atoi(val);
         else if (!strcmp(key, "fondo_politica"))       g_set.bg_policy = (u8)atoi(val);

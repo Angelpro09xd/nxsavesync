@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <time.h>
 
 
 // --------------------------------------------------------------------------
@@ -130,6 +131,68 @@ bool notify_read(notify_info_t *out, bool consume)
 
     if (consume) remove(NOTIFY_PATH);
 
+    out->valid = true;
+    return true;
+}
+
+
+// --------------------------------------------------------------------------
+// estado para el aviso en pantalla
+// --------------------------------------------------------------------------
+//
+// Formato de texto plano, una linea por cosa. Se eligio asi para que se pueda
+// mirar con cualquier editor desde el PC cuando algo no cuadre, que con un
+// binario compacto habria que descifrarlo.
+
+void estado_write(const estado_t *e)
+{
+    mkdir(CFG_DIR, 0777);
+
+    FILE *f = fopen(ESTADO_PATH, "w");
+    if (!f) return;
+
+    fprintf(f, "# NX Save Sync - estado para el aviso en pantalla\n");
+    fprintf(f, "# lo escriben la app y el sysmodule; lo lee el overlay\n");
+    fprintf(f, "pendientes=%d\n", e->pendientes);
+    fprintf(f, "cuando=%llu\n", (unsigned long long)time(NULL));
+
+    for (int i = 0; i < e->n && i < ESTADO_MAX_JUEGOS; i++) {
+        // El nombre puede llevar cualquier cosa menos un salto de linea, asi
+        // que el separador es una barra y el nombre va al final.
+        fprintf(f, "juego=%u|%s\n", e->estado[i], e->nombre[i]);
+    }
+
+    fclose(f);
+}
+
+bool estado_read(estado_t *out)
+{
+    memset(out, 0, sizeof(*out));
+
+    FILE *f = fopen(ESTADO_PATH, "r");
+    if (!f) return false;
+
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+        if (line[0] == '#' || line[0] == '\0') continue;
+
+        if (!strncmp(line, "pendientes=", 11)) {
+            out->pendientes = atoi(line + 11);
+        } else if (!strncmp(line, "cuando=", 7)) {
+            out->when = strtoull(line + 7, NULL, 10);
+        } else if (!strncmp(line, "juego=", 6) && out->n < ESTADO_MAX_JUEGOS) {
+            char *barra = strchr(line + 6, '|');
+            if (!barra) continue;
+            *barra = '\0';
+            out->estado[out->n] = (u8)atoi(line + 6);
+            snprintf(out->nombre[out->n], sizeof(out->nombre[0]), "%s", barra + 1);
+            out->n++;
+        }
+    }
+
+    fclose(f);
     out->valid = true;
     return true;
 }

@@ -370,4 +370,49 @@ check("las dos quedan identicas",
 rt2.sync_shadows("UID0", 0x0100000000010000)
 check("borra lo que sobra en la de trabajo", not (trabajo / "sobra.sav").exists())
 
+# --- clonar un perfil en un emulador ---------------------------------
+#
+# profiles.dat es la lista de cuentas del emulador: dejarla mal significa
+# que no arranca o que pierde de vista sus partidas. Se comprueba que se
+# conserva lo que habia, que no crece el archivo, y que repetir no duplica.
+import tempfile, shutil
+
+base = Path(tempfile.mkdtemp()) / "emu"
+av = base / "nand/system/save/8000000000000010/su/avators"
+av.mkdir(parents=True)
+
+previo = emulators.build_profiles_dat([("AABBCCDDEEFF00112233445566778899", "Ya estaba")])
+(av / "profiles.dat").write_bytes(previo)
+
+emu = emulators.Emulator("prueba", "yuzu", base)
+UID = "1122334455667788" + "99AABBCCDDEEFF00"
+
+emulators.clona_perfil(emu, UID, "Angelpro09", b"\xff\xd8\xff\xe0foto")
+tras = emu.declared_profiles()
+
+check("el perfil que ya estaba se conserva",
+      ("AABBCCDDEEFF00112233445566778899", "Ya estaba") in tras)
+check("el perfil de la consola se anade", (UID, "Angelpro09") in tras)
+check("se escribe la foto", (av / f"{UID}.jpg").is_file())
+check("se guarda copia del original",
+      (av / "profiles.dat.antes-de-nxsavesync").read_bytes() == previo)
+check("el archivo no cambia de tamano",
+      len((av / "profiles.dat").read_bytes()) == len(previo))
+
+emulators.clona_perfil(emu, UID, "Angelpro09", None)
+check("repetirlo no duplica", len(emu.declared_profiles()) == len(tras))
+
+emulators.clona_perfil(emu, UID, "Otro nombre", None)
+check("se puede renombrar", (UID, "Otro nombre") in emu.declared_profiles())
+
+lleno = [(f"{i:032X}", f"P{i}") for i in range(1, 9)]
+(av / "profiles.dat").write_bytes(emulators.build_profiles_dat(lleno))
+try:
+    emulators.clona_perfil(emu, UID, "No cabe", None)
+    check("con 8 perfiles avisa en vez de pisar uno", False)
+except RuntimeError:
+    check("con 8 perfiles avisa en vez de pisar uno", True)
+
+shutil.rmtree(base.parent)
+
 print("\nTODO OK")

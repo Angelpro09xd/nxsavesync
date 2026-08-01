@@ -31,9 +31,21 @@ body {
 
 /* ---------- dock, igual que en la consola ---------- */
 .dock {
+  position:relative;
   flex:0 0 86px; align-self:center;
   display:flex; flex-direction:column; align-items:center; gap:4px;
   padding:16px 0; border-radius:44px;
+}
+/* La pastilla del elegido se desliza en vez de saltar, como la gota del
+   homebrew. La posicion la pone el JS. */
+.dock::after {
+  content:""; position:absolute; left:8px; width:70px; height:var(--nav-h,58px);
+  top:var(--nav-y,0px); border-radius:20px;
+  background:rgba(74,216,230,.20);
+  background:color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow:0 0 0 1px rgba(74,216,230,.42), 0 0 28px rgba(74,216,230,.22);
+  transition:top .34s cubic-bezier(.34,1.3,.5,1), height .24s ease, opacity .2s;
+  opacity:var(--nav-op,0); pointer-events:none;
 }
 .glass {
   background:var(--pane);
@@ -51,14 +63,10 @@ body {
 }
 .nav svg { width:22px; height:22px; fill:currentColor; }
 .nav:hover { color:var(--ink); background:rgba(255,255,255,.05); }
-.nav.on {
-  color:var(--ink);
-  background:rgba(74,216,230,.22);
-  background:color-mix(in srgb, var(--accent) 22%, transparent);
-  box-shadow:0 0 0 1px rgba(74,216,230,.55), 0 0 26px rgba(74,216,230,.30);
-  box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
-             0 0 26px color-mix(in srgb, var(--accent) 30%, transparent);
-}
+.nav { position:relative; z-index:1; }
+.nav.on { color:var(--ink); }
+.nav.on svg { transform:scale(1.12); }
+.nav svg { transition:transform .26s cubic-bezier(.34,1.4,.5,1); }
 .nav:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .estado-dock { margin-top:auto; padding-top:14px; text-align:center; font-size:11px; color:var(--dim); }
 .punto { width:9px; height:9px; border-radius:50%; margin:0 auto 5px; background:var(--ok); }
@@ -79,22 +87,61 @@ h1 { margin:0; font-size:32px; font-weight:650; letter-spacing:-.02em; }
 .hoja::-webkit-scrollbar { width:10px; }
 .hoja::-webkit-scrollbar-thumb { background:rgba(255,255,255,.14); border-radius:6px; }
 
-section { display:none; animation:entra .26s cubic-bezier(.2,.7,.3,1); }
-section.on { display:block; }
-@keyframes entra { from { opacity:0; transform:translateY(14px) scale(.99); } }
+section { display:none; }
+section.on { display:block; animation:entra .3s cubic-bezier(.2,.75,.3,1) both; }
+@keyframes entra { from { opacity:0; transform:translateY(16px) scale(.985); } }
+
+/* Las filas entran una detras de otra. El retraso lo pone el JS como variable,
+   porque el numero de filas cambia y no se puede dejar escrito en el CSS. */
+.fila { animation:sube .34s cubic-bezier(.2,.75,.3,1) both; animation-delay:var(--t,0s); }
+@keyframes sube { from { opacity:0; transform:translateY(10px); } }
 
 h2 { margin:0 0 4px; font-size:19px; font-weight:640; }
 .ayuda { margin:0 0 20px; color:var(--dim); font-size:13.5px; }
 
+/* ---------- cifras ---------- */
+.cifras {
+  display:grid; gap:12px; margin-bottom:20px;
+  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+}
+.cifra {
+  padding:18px 20px; border-radius:18px;
+  background:var(--pane); border:1px solid var(--line);
+  animation:sube .38s cubic-bezier(.2,.75,.3,1) both; animation-delay:var(--t,0s);
+  transition:transform .2s cubic-bezier(.2,.8,.3,1), border-color .2s;
+}
+.cifra:hover { transform:translateY(-3px); border-color:rgba(226,236,250,.2); }
+.cifra b {
+  display:block; font-size:30px; font-weight:640; letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; line-height:1.15;
+}
+.cifra span { font-size:12.5px; color:var(--dim); letter-spacing:.03em; }
+.cifra.ok b   { color:var(--ok); }
+.cifra.acento b { color:var(--accent); }
+
 /* ---------- filas ---------- */
 .fila {
+  position:relative; overflow:hidden;
   display:flex; align-items:center; gap:18px;
   padding:15px 18px; border-radius:16px;
   background:var(--pane); border:1px solid var(--line);
   margin-bottom:10px;
-  transition:background .18s ease, transform .18s ease;
+  transition:background .2s ease, transform .2s cubic-bezier(.2,.8,.3,1),
+             border-color .2s ease, box-shadow .2s ease;
 }
-.fila:hover { background:var(--pane-hi); }
+.fila:hover {
+  background:var(--pane-hi); transform:translateX(3px);
+  border-color:rgba(226,236,250,.2);
+  box-shadow:0 6px 22px rgba(0,0,0,.25);
+}
+/* Un filo de acento que crece al pasar por encima. */
+.fila::before {
+  content:""; position:absolute; left:0; top:12px; bottom:12px; width:3px;
+  border-radius:0 3px 3px 0; background:var(--accent);
+  transform:scaleY(0); transform-origin:center;
+  transition:transform .24s cubic-bezier(.2,.8,.3,1);
+}
+.fila:hover::before { transform:scaleY(1); }
 .fila .txt { flex:1; min-width:0; }
 .fila .txt b { display:block; font-weight:600; font-size:15px; }
 .fila .txt small { color:var(--dim); font-size:12.5px; }
@@ -154,6 +201,29 @@ pre.log {
   white-space:pre-wrap; word-break:break-word;
 }
 
+/* ---------- onda al pulsar ---------- */
+.onda {
+  position:absolute; border-radius:50%; pointer-events:none;
+  background:rgba(255,255,255,.32); transform:translate(-50%,-50%) scale(0);
+  animation:onda .55s cubic-bezier(.2,.8,.3,1) forwards;
+}
+@keyframes onda { to { transform:translate(-50%,-50%) scale(1); opacity:0; } }
+.btn, .fila, .nav { position:relative; overflow:hidden; }
+
+/* ---------- banda de diagnostico ---------- */
+#diag {
+  display:none; margin-bottom:2px; padding:14px 18px; border-radius:16px;
+  border:1px solid rgba(255,107,122,.45); background:rgba(255,107,122,.12);
+  font-size:14px; line-height:1.55;
+}
+#diag.on { display:block; }
+#diag b { display:block; margin-bottom:4px; font-size:15px; color:var(--err); }
+#diag code {
+  display:block; margin-top:8px; padding:10px 12px; border-radius:10px;
+  background:rgba(0,0,0,.32); font-family:var(--mono); font-size:12px;
+  white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto;
+}
+
 /* ---------- aviso flotante ---------- */
 #aviso {
   position:fixed; left:50%; bottom:26px; transform:translate(-50%,26px);
@@ -209,10 +279,13 @@ pre.log {
       </div>
     </div>
 
+    <div id="diag"></div>
+
     <div class="hoja glass">
       <section id="s-estado" class="on">
         <h2>Estado</h2>
         <p class="ayuda">Lo que ha hecho el daemon desde que arrancó.</p>
+        <div class="cifras" id="cifras"></div>
         <div id="stats"></div>
         <div class="acciones">
           <button class="btn pri" data-accion="rescan">Volver a buscar emuladores</button>
@@ -261,7 +334,28 @@ async function pide(ruta, cuerpo) {
     ? { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cuerpo) }
     : {};
   const r = await fetch(ruta + (ruta.includes("?") ? "&" : "?") + "t=" + T, opt);
-  return r.json();
+
+  // El cuerpo se lee como texto primero: si el servidor devolvio un error, lo
+  // que llega no es JSON y hay que poder ensenarlo tal cual en vez de tragarse
+  // la excepcion y dejar la pagina en blanco.
+  const txt = await r.text();
+  try {
+    return JSON.parse(txt);
+  } catch {
+    const e = new Error("respuesta que no es JSON");
+    e.estado = r.status;
+    e.cuerpo = txt.slice(0, 900);
+    throw e;
+  }
+}
+
+function diagnostico(titulo, detalle, traza) {
+  const el = $("#diag");
+  el.innerHTML = "";
+  const b = document.createElement("b"); b.textContent = titulo; el.appendChild(b);
+  const p = document.createElement("div"); p.textContent = detalle; el.appendChild(p);
+  if (traza) { const c = document.createElement("code"); c.textContent = traza; el.appendChild(c); }
+  el.classList.add("on");
 }
 
 let avisoTimer = null;
@@ -277,9 +371,21 @@ function aviso(txt) {
 const TITULOS = { estado:"Estado", emuladores:"Emuladores", ajustes:"Ajustes",
                   copias:"Copias", registro:"Registro" };
 
+// La pastilla del dock persigue al elegido. Se mide en vez de calcularse:
+// el dock cambia de forma en pantallas estrechas.
+function mueveDock(b) {
+  const dock = document.querySelector(".dock");
+  const r = b.getBoundingClientRect(), d = dock.getBoundingClientRect();
+  dock.style.setProperty("--nav-y", (r.top - d.top) + "px");
+  dock.style.setProperty("--nav-h", r.height + "px");
+  dock.style.setProperty("--nav-op", "1");
+}
+
 document.querySelectorAll(".nav").forEach((b) => {
   b.addEventListener("click", () => {
     document.querySelectorAll(".nav").forEach((o) => o.classList.toggle("on", o === b));
+    mueveDock(b);
+
     const sec = b.dataset.sec;
     document.querySelectorAll("section").forEach((s) => {
       const activa = s.id === "s-" + sec;
@@ -289,6 +395,45 @@ document.querySelectorAll(".nav").forEach((b) => {
     $("#titulo").textContent = TITULOS[sec];
   });
 });
+
+addEventListener("load",   () => mueveDock(document.querySelector(".nav.on")));
+addEventListener("resize", () => mueveDock(document.querySelector(".nav.on")));
+
+// Onda desde el punto exacto donde pulsas.
+addEventListener("pointerdown", (e) => {
+  const el = e.target.closest(".btn, .fila, .nav");
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const o = document.createElement("span");
+  o.className = "onda";
+  const d = Math.max(r.width, r.height) * 2;
+  o.style.width = o.style.height = d + "px";
+  o.style.left = (e.clientX - r.left) + "px";
+  o.style.top  = (e.clientY - r.top)  + "px";
+  el.appendChild(o);
+  setTimeout(() => o.remove(), 600);
+});
+
+// Reparte el retraso de entrada entre los hijos de un contenedor.
+function escalona(cont) {
+  [...cont.children].forEach((h, i) => h.style.setProperty("--t", (i * 0.045) + "s"));
+}
+
+// Las cifras suben contando en vez de aparecer puestas.
+function cuenta(el, hasta) {
+  const desde = parseInt(el.dataset.v || "0", 10);
+  if (desde === hasta) { el.textContent = hasta; return; }
+  el.dataset.v = hasta;
+
+  const t0 = performance.now(), dur = 600;
+  function paso(t) {
+    const k = Math.min((t - t0) / dur, 1);
+    const suave = 1 - Math.pow(1 - k, 3);
+    el.textContent = Math.round(desde + (hasta - desde) * suave);
+    if (k < 1) requestAnimationFrame(paso);
+  }
+  requestAnimationFrame(paso);
+}
 
 document.querySelectorAll("[data-accion]").forEach((b) => {
   b.addEventListener("click", async () => {
@@ -372,6 +517,7 @@ function pintaAjustes(items) {
 
     cont.appendChild(fila(it.label || it.key, it.help || "", control));
   }
+  escalona(cont);
 }
 
 function pintaEmus(emus, items) {
@@ -392,15 +538,29 @@ function pintaEmus(emus, items) {
     });
     cont.appendChild(fila(e.nombre, e.ruta, item ? sw : null));
   }
+  escalona(cont);
 }
 
 function pintaEstado(d) {
+  const s = d.stats || {};
+
+  // Las tres cifras que se miran de un vistazo, arriba y grandes.
+  const cif = $("#cifras");
+  if (!cif.dataset.hecho) {
+    cif.dataset.hecho = "1";
+    cif.innerHTML = `
+      <div class="cifra acento"><b id="c-con">0</b><span>Conexiones de la consola</span></div>
+      <div class="cifra ok"><b id="c-arch">0</b><span>Archivos movidos</span></div>
+      <div class="cifra"><b id="c-emus">0</b><span>Emuladores encontrados</span></div>`;
+    escalona(cif);
+  }
+  cuenta($("#c-con"),  s.conexiones ?? 0);
+  cuenta($("#c-arch"), s.archivos ?? 0);
+  cuenta($("#c-emus"), (d.emuladores || []).length);
+
   const cont = $("#stats");
   cont.innerHTML = "";
-  const s = d.stats || {};
   const pares = [
-    ["Conexiones de la consola", s.conexiones ?? 0],
-    ["Archivos movidos", s.archivos ?? 0],
     ["Última sincronización", s.ultima || "todavía ninguna"],
     ["Carpeta de copias", d.rutas.copias],
     ["Carpeta de estado", d.rutas.estado],
@@ -411,6 +571,7 @@ function pintaEstado(d) {
     sp.textContent = String(v);
     cont.appendChild(fila(k, "", sp));
   }
+  escalona(cont);
   if (d.windows) {
     cont.appendChild(fila("Abrir al iniciar sesión",
       "Deja el icono junto al reloj listo desde el arranque",
@@ -435,12 +596,42 @@ function pintaCopias(cs) {
     sp.textContent = c.archivos + " archivo" + (c.archivos === 1 ? "" : "s");
     cont.appendChild(fila(c.nombre, c.cuando, sp));
   }
+  escalona(cont);
 }
 
 async function carga() {
   let d;
-  try { d = await pide("/api/estado"); }
-  catch { $("#dock-estado").textContent = "sin daemon"; $("#punto").style.background = "var(--err)"; return; }
+  try {
+    d = await pide("/api/estado");
+  } catch (e) {
+    $("#dock-estado").textContent = "sin daemon";
+    $("#punto").style.background = "var(--err)";
+    diagnostico("No se pudo hablar con el programa",
+      e.estado ? `El servidor respondio ${e.estado}.` :
+                 "No respondio. Puede que se haya cerrado.",
+      e.cuerpo || String(e));
+    return;
+  }
+
+  if (d.error) {
+    diagnostico("El programa fallo al montar el estado", d.error, d.traza);
+    return;
+  }
+
+  // El caso mas habitual con diferencia: el daemon no llego a arrancar, y
+  // entonces no hay nada que ensenar. Decirlo es mas util que quedarse vacio.
+  const g = d.diag || {};
+  if (!g.rt) {
+    diagnostico("El daemon no esta en marcha",
+      "El menu funciona, pero el programa que habla con la consola no ha "
+      + "arrancado, asi que no hay datos que ensenar. Suele ser un fallo al "
+      + "detectar los emuladores o un puerto ocupado. Mira el registro.",
+      g.error || "");
+  } else if (g.error) {
+    diagnostico("Hubo un fallo", g.error, "");
+  } else {
+    $("#diag").classList.remove("on");
+  }
 
   $("#c-pc").textContent = d.nombre;
   $("#c-emu").textContent = d.emulador || "ninguno";

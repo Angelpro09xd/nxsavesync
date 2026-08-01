@@ -36,6 +36,8 @@ void net_w_u16(net_t *n, u16 v);
 void net_w_u32(net_t *n, u32 v);
 void net_w_u64(net_t *n, u64 v);
 void net_w_str(net_t *n, const char *s);
+// Bytes en bruto dentro de la trama que se esta armando.
+void net_w_bytes(net_t *n, const void *data, size_t len);
 bool net_send(net_t *n);                  // manda cabecera + payload acumulado
 
 // Para cuerpos grandes: manda la cabecera con un tamano ya conocido y luego

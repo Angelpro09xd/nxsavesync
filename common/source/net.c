@@ -245,6 +245,14 @@ bool net_send_streaming(net_t *n, u64 extra)
     return send_all(n, n->wbuf, n->wlen);
 }
 
+void net_w_bytes(net_t *n, const void *data, size_t len)
+{
+    if (!data || len == 0) return;
+    if (!wreserve(n, len)) return;
+    memcpy(n->wbuf + n->wlen, data, len);
+    n->wlen += len;
+}
+
 bool net_send_raw(net_t *n, const void *data, size_t len)
 {
     return send_all(n, data, len);

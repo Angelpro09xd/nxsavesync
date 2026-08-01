@@ -1169,3 +1169,58 @@ int scr_pc_cfg(const scr_ctx_t *c, const ui_input_t *in, const char *server,
     ui_layer_end(anim, SHEET_SCALE(anim), x + w / 2, y + h / 2, 0, SHEET_RISE(anim));
     return hit;
 }
+
+// --------------------------------------------------------------------------
+// hoja: elegir de una lista
+// --------------------------------------------------------------------------
+//
+// Se usa para elegir a que emulador clonar el perfil. Es generica porque hacer
+// una hoja a medida para cada eleccion acaba en cinco hojas casi iguales.
+
+int scr_pick(const scr_ctx_t *c, const ui_input_t *in, const char *titulo,
+             const char *ayuda, const char *const *opciones,
+             const char *const *detalles, int n, int sel, float anim)
+{
+    const int rh = 68, gap = 10;
+    const int alto_lista = n * rh + (n - 1) * gap;
+    const int w = 760;
+    const int h = 128 + alto_lista + 26;
+
+    int x, y;
+    scr_scrim(anim);
+    ui_layer_begin();
+    scr_sheet(c, w, h, &x, &y);
+
+    ui_text_clip_center(x + w / 2, y + 28, 27, w - 80, COL_TEXT, titulo);
+    if (ayuda && ayuda[0])
+        ui_text_clip_center(x + w / 2, y + 68, 16, w - 100,
+                            ui_alpha(COL_DIM, 210), ayuda);
+
+    int hit = -1;
+    const int pad = 34, rw = w - 2 * pad;
+    int ry = y + 108;
+
+    for (int i = 0; i < n; i++) {
+        bool on = (i == sel);
+
+        ui_rect_round(x + pad, ry, rw, rh, 17, ui_alpha(COL_TEXT, on ? 34 : 15));
+        if (on) {
+            ui_rect_round_outline(x + pad, ry, rw, rh, 17, 1, ui_alpha(c->accent, 175));
+            ui_rect_round(x + pad + 10, ry + 15, 4, rh - 30, 2, c->accent);
+        }
+
+        bool con_detalle = detalles && detalles[i] && detalles[i][0];
+        ui_text_clip_sh(x + pad + 28, ry + (con_detalle ? 12 : (rh - 24) / 2),
+                        19, rw - 56, COL_TEXT, opciones[i]);
+        if (con_detalle)
+            ui_text_clip_sh(x + pad + 28, ry + 39, 14, rw - 56,
+                            ui_alpha(COL_DIM, 205), detalles[i]);
+
+        ui_debug_box(x + pad, ry, rw, rh, "");
+        if (ui_hit(in, x + pad, ry, rw, rh)) hit = i;
+        ry += rh + gap;
+    }
+
+    ui_layer_end(anim, SHEET_SCALE(anim), x + w / 2, y + h / 2, 0, SHEET_RISE(anim));
+    return hit;
+}

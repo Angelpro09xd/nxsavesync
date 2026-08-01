@@ -295,6 +295,10 @@ static bool pick_host(host_t *out)
 // Contadores de la pasada, para el aviso del final.
 static int g_pulled, g_pushed, g_deleted, g_pending, g_failed;
 
+// Los que se quedan esperando una decision, por nombre. Se publican en la SD
+// para que el overlay pueda avisar sobre el menu HOME sin hablar con nadie.
+static estado_t g_estado;
+
 static int sync_one_profile(net_t *n, AccountUid uid, const char *name)
 {
     gamelist_t games;
@@ -330,7 +334,15 @@ static int sync_one_profile(net_t *n, AccountUid uid, const char *name)
             continue;
         }
 
-        if (st.skipped) saltados++;
+        if (st.skipped) {
+            saltados++;
+            if (g_estado.n < ESTADO_MAX_JUEGOS) {
+                snprintf(g_estado.nombre[g_estado.n], sizeof(g_estado.nombre[0]),
+                         "%s", games.v[i].name);
+                g_estado.estado[g_estado.n] = SUM_PC_CHANGED;
+                g_estado.n++;
+            }
+        }
         g_pulled  += st.pulled;
         g_pushed  += st.pushed;
         g_deleted += st.del_local + st.del_remote;
@@ -359,6 +371,7 @@ static void sync_pass(const char *motivo)
     if (!g_have_account) return;
 
     g_pulled = g_pushed = g_deleted = g_pending = g_failed = 0;
+    memset(&g_estado, 0, sizeof(g_estado));
 
     AccountUid uids[8];
     s32 count = 0;
@@ -413,6 +426,10 @@ static void sync_pass(const char *motivo)
 
     notify_record(kind, g_pulled, g_pushed, g_deleted, g_pending, motivo);
     notify_led(kind);
+
+    // Y el estado de ahora, que el overlay relee cada pocos segundos.
+    g_estado.pendientes = g_pending;
+    estado_write(&g_estado);
 
 }
 

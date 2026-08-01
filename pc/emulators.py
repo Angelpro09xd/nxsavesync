@@ -436,3 +436,104 @@ def detect(home: Path | None = None, profile: str | None = None,
     emus += [Emulator(name, "ryujinx", base)
              for name, base in _ryujinx_bases(home, windows)]
     return emus
+
+
+# --------------------------------------------------------------------------
+# clonar un perfil de la consola
+# --------------------------------------------------------------------------
+#
+# Escribir profiles.dat es lo mas delicado que hace este programa en el PC: es
+# la lista de cuentas del emulador, y dejarla mal significa que el emulador no
+# arranca o pierde de vista sus partidas. Por eso:
+#
+#   - se reconstruye el archivo entero desde lo que ya habia, entrada a entrada,
+#   - se respeta el tamano exacto del formato,
+#   - y siempre se guarda una copia antes de tocar nada.
+
+PROFILES_HEADER = 0x10
+PROFILES_ENTRY  = 0xC8
+PROFILES_MAX    = 8
+
+
+def build_profiles_dat(entradas: list[tuple[str, str]], original: bytes = b"") -> bytes:
+    """Arma un profiles.dat con `entradas` = [(uuid, nombre)].
+
+    `original` sirve para conservar los bytes que no entendemos: la cabecera y
+    el relleno de cada entrada. Reescribirlos a cero funciona en las pruebas
+    pero es tentar a la suerte con un formato que no esta documentado.
+    """
+    total = PROFILES_HEADER + PROFILES_ENTRY * PROFILES_MAX
+    out = bytearray(original[:total].ljust(total, b"\0"))
+
+    for i in range(PROFILES_MAX):
+        off = PROFILES_HEADER + i * PROFILES_ENTRY
+
+        if i >= len(entradas):
+            # Hueco libre: se limpia solo el uuid y el nombre, que es lo que
+            # mira el emulador para saber si la entrada existe.
+            out[off : off + 0x20] = b"\0" * 0x20
+            out[off + 0x28 : off + 0x48] = b"\0" * 0x20
+            continue
+
+        uuid, nombre = entradas[i]
+        raw = bytes.fromhex(uuid)[::-1]          # el uuid va al reves en disco
+        if len(raw) != 0x10:
+            raise ValueError(f"uuid de 16 bytes esperado, llego {len(raw)}")
+
+        out[off : off + 0x10] = raw
+        out[off + 0x10 : off + 0x20] = raw       # se repite, asi es el formato
+
+        nb = nombre.encode("utf-8")[:0x1F]
+        out[off + 0x28 : off + 0x48] = nb.ljust(0x20, b"\0")
+
+    return bytes(out)
+
+
+def clona_perfil(emu: "Emulator", uuid: str, nombre: str,
+                 avatar: bytes | None) -> str:
+    """Deja el perfil de la consola dentro del emulador.
+
+    Devuelve un mensaje para ensenar en la consola. Lanza si no se puede.
+    """
+    if emu.kind != "yuzu":
+        raise RuntimeError(
+            f"{emu.name} no guarda los perfiles como la familia de yuzu; "
+            f"todavia no se sabe escribir los suyos")
+
+    carpeta = emu.base / "nand/system/save/8000000000000010/su/avators"
+    carpeta.mkdir(parents=True, exist_ok=True)
+    db = carpeta / "profiles.dat"
+
+    original = db.read_bytes() if db.is_file() else b""
+    actuales = parse_profiles_dat(original) if original else []
+
+    uuid = uuid.upper()
+    ya_estaba = any(u.upper() == uuid for u, _ in actuales)
+
+    # Si ya existe, se le cambia el nombre; si no, se anade al final.
+    nuevas: list[tuple[str, str]] = []
+    for u, n in actuales:
+        nuevas.append((uuid, nombre) if u.upper() == uuid else (u, n))
+    if not ya_estaba:
+        if len(nuevas) >= PROFILES_MAX:
+            raise RuntimeError(f"{emu.name} ya tiene {PROFILES_MAX} perfiles, "
+                               f"que es el maximo; borra alguno")
+        nuevas.append((uuid, nombre))
+
+    datos = build_profiles_dat(nuevas, original)
+
+    # Se relee lo escrito antes de dar nada por bueno.
+    if parse_profiles_dat(datos) != [(u.upper(), n) for u, n in nuevas]:
+        raise RuntimeError("el profiles.dat resultante no se relee igual; "
+                           "no se toca nada")
+
+    if original:
+        (carpeta / "profiles.dat.antes-de-nxsavesync").write_bytes(original)
+
+    db.write_bytes(datos)
+
+    if avatar:
+        (carpeta / f"{uuid}.jpg").write_bytes(avatar)
+
+    return (f"{nombre} {'actualizado' if ya_estaba else 'creado'} en {emu.name}"
+            f"{' con su foto' if avatar else ''}")
